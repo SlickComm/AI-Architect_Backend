@@ -8,13 +8,17 @@ import ezdxf
 from ezdxf.enums import const
 
 import os
+from dotenv import load_dotenv
 import uuid
 import json
 
 app = FastAPI()
 
+# Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
+load_dotenv()
+
 # OpenAI-Key
-client = OpenAI(api_key="")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Global variable for session
 session_data = {}
@@ -569,7 +573,6 @@ Aktuelles JSON:
       "updated_json": session_data[session_id],
       "answer": new_json.get("answer", "")
     }
-
 
 # ---------------------------------------------
 # /generate-dxf/-Endpunkt:
