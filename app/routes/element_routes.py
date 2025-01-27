@@ -19,9 +19,13 @@ def add_element(session_id: str, description: str = Body(..., embed=True)):
 @router.post("/edit-element/")
 def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     session = session_manager.get_session(session_id)
-    return openai_service.edit_element(session, instruction)
+    reply = openai_service.edit_element(session, instruction)
+    session_manager.update_session(session_id, reply["updated_json"])
+    return reply
 
 @router.post("/remove-element/")
 def remove_element(session_id: str, instruction: str = Body(..., embed=True)):
     session = session_manager.get_session(session_id)
-    return openai_service.remove_element(session, instruction)
+    reply = openai_service.remove_element(session, instruction)
+    session_manager.update_session(session_id, reply["updated_json"])
+    return reply
