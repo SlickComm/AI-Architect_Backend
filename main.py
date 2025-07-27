@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 import uuid
 import json
 
+from cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top
+from cad.pipe import draw_pipe_front, register_layers
+from cad.surface import draw_surface_top, register_layers as reg_surface
+from cad.passages import register_layers as reg_pass, draw_pass_front
+
 app = FastAPI()
 
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
@@ -61,20 +66,24 @@ def add_element(session_id: str, description: str = Body(..., embed=True)):
     prompt = f"""
 ACHTUNG: Füge NICHT eigenmächtig Oberflächenbefestigung hinzu,
 außer der Benutzer schreibt ausdrücklich "Oberflächenbefestigung",
-"Gehwegplatten", "Mosaikpflaster", "Verbundpflaster" o.Ä.
+"Gehwegplatten", "Mosaikpflaster", "Verbundpflaster" o. Ä.
 
-Wir arbeiten mit diesem JSON-Schema, wobei "material" + "offset" bei Oberflächenbefestigung Pflicht sind:
+Wir arbeiten mit diesem JSON-Schema, wobei bei
+* Oberflächenbefestigung  ⇒  material + offset Pflicht sind,
+* Durchstich              ⇒  width Pflicht ist; offset & pattern optional.
+
 {{
   "elements": [
     {{
-      "type": "string",
+      "type": "string",   # Baugraben | Rohr | Oberflächenbefestigung | Durchstich
       "length": 0.0,
-      "width": 0.0,
-      "depth": 0.0,
+      "width":  0.0,
+      "depth":  0.0,
       "diameter": 0.0,
 
       "material": "",
-      "offset": 0.0
+      "offset":   0.0,
+      "pattern":  ""      # nur für Durchstich (Schraffur-Name)
     }}
   ],
   "answer": ""
@@ -84,32 +93,35 @@ Aktuelles JSON:
 {json.dumps(current_json, indent=2)}
 
 ACHTUNG:
-- Alle Maßeinheiten sind in Metern.
-- Falls in der Beschreibung z.B. "DN150" vorkommt, dann bedeutet das diameter=0.15 (also DN-Wert / 1000).
+- Alle Maße in Metern.
+- „DN150“ o. Ä. wird als diameter = 0.15 erkannt.
 
-1) Füge exakt EIN neues Element hinzu basierend auf: "{description}"
-   - Falls "Baugraben" => type="Baugraben" + length,width,depth
-   - Falls "Rohr" oder "Druckrohr" => type="Rohr" + length, diameter
-   - Falls "Oberflächenbefestigung" o.ä. => type="Oberflächenbefestigung",
-       *zusätzlich* material="...", offset=... für Randzone, 
-       NICHT depth oder diameter benutzen
+1) Füge **exakt EIN** neues Element hinzu basierend auf: "{description}"
+   - Baugraben               ⇒ type="Baugraben",            length,width,depth
+   - Rohr / Druckrohr        ⇒ type="Rohr",                 length,diameter
+   - Oberflächenbefestigung  ⇒ type="Oberflächenbefestigung", material,offset
+   - Durchstich              ⇒ type="Durchstich",           width,
+                                optional: offset (von links), pattern (Hatch)
 
-2) Schreibe zusätzlich ein kurzes "answer"-Feld (1-2 Sätze),
-   z.B. als kleine Zusammenfassung dessen, was du generiert hast.
+2) Ergänze ein kurzes Feld "answer" (1–2 Sätze), was Du angelegt hast.
 
-Gib nur das neue komplette JSON zurück. Es soll so aussehen:
+Gib das *komplette* JSON zurück:
 {{
   "elements": [...],
-  "answer": "Irgendein kurzer Text..."
+  "answer": "…"
 }}
 """
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.1
+            model="gpt-3.5-turbo-0125",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a JSON API."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=500,
+            temperature=0.0,
         )
         raw_output = response.choices[0].message.content
         new_json = json.loads(raw_output)
@@ -150,328 +162,254 @@ def generate_dxf_by_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 def _generate_dxf_intern(parsed_json) -> str:
-    # 2) DXF-Dokument anlegen
-        doc = ezdxf.new("R2018", setup=True)
-        msp = doc.modelspace()
+    # ---------- DXF-Grundgerüst ----------
+    doc = ezdxf.new("R2018", setup=True)
+    msp = doc.modelspace()
 
-        doc.header["$LTSCALE"] = 1.0
-        doc.header["$CELTSCALE"] = 1.0
-        doc.header["$PSLTSCALE"] = 0
+    reg_trench(doc)
+    reg_surface(doc)
+    register_layers(doc)
+    reg_pass(doc)
 
-        # Linetypes
-        doc.linetypes.add(
-            name="DASHED",
-            pattern="A,.5,-.25",
-            description="--  --  --  --",
-            length=0.75
-        )
-        doc.linetypes.add(
-            name="DASHDOT",
-            pattern="A,.5,-.25,0,-.25",
-            description="--  --  --  --",
-            length=0.75
-        )
+    doc.header["$LTSCALE"]  = 1.0
+    doc.header["$CELTSCALE"] = 1.0
+    doc.header["$PSLTSCALE"] = 0
 
-        # Layers
-        doc.layers.new(name="Baugraben",    dxfattribs={"color":0})
-        doc.layers.new(name="InnerRechteck",dxfattribs={"color":0})
-        doc.layers.new(name="Zwischenraum", dxfattribs={"color":3})
-        doc.layers.new(name="Rohr",         dxfattribs={"color": 0})
-        doc.layers.new(name="Oberflaeche",  dxfattribs={"color":0, "linetype":"DASHED"})
-        doc.layers.new(name="Symmetrie",    dxfattribs={"color":5, "linetype":"DASHDOT"})
+    # ---------- Elemente vorsortieren ----------
+    trenches, pipes, surfaces, passes = [], [], [], []
+    for el in parsed_json.get("elements", []):
+        t = el.get("type", "").lower()
+        if "baugraben"           in t: trenches.append(el)
+        elif "rohr"              in t: pipes.append(el)
+        elif "oberflächenbefest" in t: surfaces.append(el)
+        elif "durchstich" in t:          passes.append(el)
 
-        # Variablen (Baugraben)
-        bg_length = 0.0
-        bg_width  = 0.0
-        bg_depth  = 0.0
+    if not trenches:
+        raise HTTPException(400, "Kein Baugraben vorhanden – bitte zuerst /add-element benutzen.")
 
-        # Variablen (Rohr)
-        r_length   = 0.0
-        r_diameter = 0.0
+    # ---------- Layout-Konstanten ----------
+    CLR_LR    = 0.20    # freier Rand links/rechts (Front)
+    CLR_BOT   = 0.20    # freier Rand unten
+    GAP_BG    = 1.50    # Abstand zwischen zwei Baugräben
+    TOP_SHIFT = 1.50    # Abstand Draufsicht → Vorderansicht
 
-        # NEU: Randzone für Oberflächenbefestigung
-        surf_offset = 0.0
-        surf_material = ""
-        surf_text   = None
+    cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
+    aufmass  = []       # sammelt Aufmaß-Zeilen
 
-        # JSON auslesen
-        for element in parsed_json.get("elements", []):
-            etype      = element.get("type","").lower()
-            length_val = float(element.get("length", 0.0))
-            width_val  = float(element.get("width",  0.0))
-            depth_val  = float(element.get("depth",  0.0))
-            diam_val = float(element.get("diameter", 0.0))
+    def draw_one_trench(msp, cx, L, B, T, pipe=None, surf=None):
+        origin_front = (cx, 0.0)
+        draw_trench_front(msp, origin_front, L, T,
+                        clearance_left=CLR_LR, clearance_bottom=CLR_BOT)
+        draw_trench_top(msp, (cx+CLR_LR, T+CLR_BOT+TOP_SHIFT),
+                        length=L, width=B)
+        _maybe_pipe(msp, [pipe] if pipe else [], 0, cx+CLR_LR, L, T)
+        _maybe_surf(msp, [surf] if surf else [], 0, cx+CLR_LR, L, B, T)
 
-            # *** NEUE Felder, falls existieren ***
-            mat_val     = element.get("material", "")
-            offset_val  = float(element.get("offset", 0.0))
+    def _maybe_pipe(msp, pipes, idx, ox, L, T):
+        if idx >= len(pipes) or not pipes[idx]:
+            return
+        d = float(pipes[idx].get("diameter", 0))
+        if d:
+            draw_pipe_front(msp, origin_front=(ox, CLR_BOT),
+                            trench_inner_length=L, diameter=d)
 
-            if "baugraben" in etype:
-                bg_length = length_val
-                bg_width  = width_val
-                bg_depth  = depth_val
-
-            elif ("druckrohr" in etype) or ("rohr" in etype):
-                r_length   = length_val
-                r_diameter = diam_val
-
-            elif "oberflächenbefestigung" in etype or "oberfläche" in etype:
-                # => offset + material
-                surf_offset   = offset_val
-                surf_material = mat_val if mat_val else "unbekannt"
-                # Komponiere einen Anzeigenamen
-                surf_text     = f"Oberflächenbefestigung: {surf_material}"
-
-        # =========================
-        # VORDERANSICHT (Front)
-        # =========================
-        LEFT_RIGHT_OFFSET = 0.2
-        BOTTOM_OFFSET     = 0.2
-
-        min_width_for_baugraben  = bg_length + 2 * LEFT_RIGHT_OFFSET
-        min_height_for_baugraben = bg_depth + BOTTOM_OFFSET
-
-        outer_front_length = min_width_for_baugraben
-        outer_front_height = min_height_for_baugraben
-
-        # Äußeres Rechteck
-        outer_points_front = [
-            (0, 0),
-            (outer_front_length, 0),
-            (outer_front_length, outer_front_height),
-            (0, outer_front_height),
-        ]
-        msp.add_lwpolyline(
-            outer_points_front,
-            close=True,
-            dxfattribs={"layer": "Baugraben"}
-        )
-
-        # Inneres Rechteck = eigentlicher Baugraben
-        offset_x = LEFT_RIGHT_OFFSET
-        offset_y = BOTTOM_OFFSET
-        inner_front = [
-            (offset_x,                offset_y),
-            (offset_x + bg_length,    offset_y),
-            (offset_x + bg_length,    offset_y + bg_depth),
-            (offset_x,                offset_y + bg_depth),
-        ]
-        msp.add_lwpolyline(
-            inner_front,
-            close=True,
-            dxfattribs={"layer": "InnerRechteck"}
-        )
-
-        # Bemaßung: Länge (horizontal)
-        dim_length = msp.add_linear_dim(
-            base=(offset_x, offset_y - 1.0),
-            p1=(offset_x, offset_y),
-            p2=(offset_x + bg_length, offset_y),
-            angle=0,
-            override={
-                "dimtxt": 0.25,
-                "dimclrd": 3,
-                "dimexe": 0.2,
-                "dimexo": 0.2,
-                "dimtad": 1,
-            }
-        )
-        dim_length.render()
-
-        # Bemaßung: Tiefe (vertikal)
-        dim_depth = msp.add_linear_dim(
-            base=(offset_x + bg_length + 1.0, offset_y),
-            p1=(offset_x + bg_length, offset_y + bg_depth),
-            p2=(offset_x + bg_length, offset_y),
-            angle=90,
-            override={
-                "dimtxt": 0.25,
-                "dimclrd": 3,
-                "dimexe": 0.2,
-                "dimexo": 0.2,
-                "dimtad": 1,
-            }
-        )
-        dim_depth.render()
-
-        # Zwischenraum-Hatch
-        hatch = msp.add_hatch(color=4, dxfattribs={"layer": "Zwischenraum"})
-        hatch.set_pattern_fill("EARTH", scale=0.05)
-        hatch.paths.add_polyline_path(outer_points_front,  is_closed=True)
-        hatch.paths.add_polyline_path(inner_front,         is_closed=True)
-
-        # =========================
-        # ROHR / DRUCKROHR in Vorderansicht
-        # =========================
-        # Nur zeichnen, wenn r_diameter > 0
-        if r_length > 0 or r_diameter > 0:
-            rohr_y_bottom = offset_y
-            rohr_y_top    = offset_y + r_diameter
-
-            rohr_x_left  = offset_x
-            rohr_x_right = offset_x + bg_length
-
-            rohr_points_f = [
-                (rohr_x_left,  rohr_y_bottom),
-                (rohr_x_right, rohr_y_bottom),
-                (rohr_x_right, rohr_y_top),
-                (rohr_x_left,  rohr_y_top),
-            ]
-            msp.add_lwpolyline(
-                rohr_points_f,
-                close=True,
-                dxfattribs={"layer": "Rohr"}
+    def _maybe_surf(msp, surfs, idx, ox, L, B, Tcombo):
+        if idx >= len(surfs) or not surfs[idx]:
+            return
+        off = float(surfs[idx].get("offset", 0))
+        if off:
+            draw_surface_top(
+                msp,
+                trench_top_left=(ox, Tcombo+CLR_BOT+TOP_SHIFT),
+                trench_length=L, trench_width=B,
+                offset=off,
+                material_text=f"Oberfläche: {surfs[idx].get('material','')}"
             )
 
-            # Symmetrie-Linie im Rohr (wenn du willst)
-            sym_line_y = (rohr_y_bottom + rohr_y_top) / 2
-            msp.add_line(
-                (rohr_x_left,  sym_line_y),
-                (rohr_x_right, sym_line_y),
-                dxfattribs={"layer": "Symmetrie"}
-            )
+    def add_aufmass(i, L, B, T, *, pipe, surf):
+        aufmass.append(f"Baugraben {i+1}: L={L} m  B={B} m  T={T} m")
+        if i < len(pipe) and pipe[i]:
+            d = pipe[i].get("diameter", 0)
+            if d:
+                aufmass.append(f"Rohr {i+1}: Ø {d} m")
+        if i < len(surf) and surf[i]:
+            off = surf[i].get("offset", 0)
+            if off:
+                aufmass.append(f"Oberfläche {i+1}: Rand {off} m")
+    
+    # ---------- Hauptschleife über alle Baugräben ----------
+    i = 0
+    while i < len(trenches):
+        # --- Basisdaten des aktuellen (linken) Grabens ----
+        bg1 = trenches[i]
+        L1, B1, T1 = map(float, (bg1["length"], bg1["width"], bg1["depth"]))
 
-        # =========================
-        # DRAUFSICHT (Top)
-        # =========================
-        top_view_offset = outer_front_height + 1.5
-        top_left_x = offset_x
-        top_left_y = top_view_offset + offset_y
+        # ❶ Prüfen, ob es *direkt nach* diesem BG einen Durchstich gibt
+        has_pass   = i < len(passes)          # gleicher Index
+        merge_next = has_pass and (i+1 < len(trenches))
 
-        outer_points_top = [
-            (top_left_x,                 top_left_y),
-            (top_left_x + bg_length,     top_left_y),
-            (top_left_x + bg_length,     top_left_y + bg_width),
-            (top_left_x,                 top_left_y + bg_width),
-        ]
-        msp.add_lwpolyline(
-            outer_points_top,
-            close=True,
-            dxfattribs={"layer": "Baugraben"},
+        # --------------------------------------------------
+        # A) FALL - Kein Durchstich  →  wie bisher
+        # --------------------------------------------------
+        if not merge_next:
+            # Vorder- und Draufsicht BG wie früher
+            draw_trench_front(msp, (cursor_x, 0), L1, T1,
+                            clearance_left=CLR_LR, clearance_bottom=CLR_BOT)
+            draw_trench_top(msp, (cursor_x+CLR_LR, T1+CLR_BOT+TOP_SHIFT),
+                            length=L1, width=B1)
+
+            # optional Rohr
+            if i < len(pipes):
+                pipe = pipes[i]
+                d = float(pipe.get("diameter", 0))
+                if d:
+                    draw_pipe_front(msp, origin_front=(cursor_x+CLR_LR, CLR_BOT),
+                                    trench_inner_length=L1, diameter=d)
+                    aufmass.append(f"Rohr {i+1}: L={pipe['length']} m  Ø={d} m")
+
+            # optional Oberfläche
+            if i < len(surfaces):
+                surf = surfaces[i]
+                off  = float(surf.get("offset", 0))
+                if off:
+                    draw_surface_top(msp,
+                        trench_top_left=(cursor_x+CLR_LR, T1+CLR_BOT+TOP_SHIFT),
+                        trench_length=L1, trench_width=B1,
+                        offset=off, material_text=f"Oberfläche: {surf.get('material','')}")
+                    aufmass.append(f"Oberfläche {i+1}: Rand={off} m  Material={surf.get('material','')}")
+
+            aufmass.append(f"Baugraben {i+1}: L={L1} m  B={B1} m  T={T1} m")
+            cursor_x += L1 + 2*CLR_LR + GAP_BG
+            i += 1
+            continue
+
+        # --------------------------------------------------
+        # B) FALL - Durchstich  →  BG1 + BG2 fusionieren
+        # --------------------------------------------------
+        bg2 = trenches[i+1]
+        L2, B2, T2 = map(float, (bg2["length"], bg2["width"], bg2["depth"]))
+
+        # Äußere Geometrie: Länge = L1+L2 (+ 2×CLR_LR), Tiefe = max(T1,T2)
+        L_combo = L1 + L2
+        T_combo = max(T1, T2)
+        B_combo = max(B1, B2)
+
+        # Vorder- + Draufsicht des *kombinierten* Baugrabens zeichnen
+        origin_front = (cursor_x, 0.0)
+        draw_trench_front(
+            msp, origin_front, L_combo, T_combo,
+            clearance_left=CLR_LR, clearance_bottom=CLR_BOT
         )
 
-        # Bemaßung Draufsicht: horizontale
-        dim_len_top = msp.add_linear_dim(
-            base=(top_left_x, top_left_y - 1.0),
-            p1=(top_left_x, top_left_y),
-            p2=(top_left_x + bg_length, top_left_y),
-            angle=0,
-            override={
-                "dimtxt": 0.25,
-                "dimclrd": 3,
-                "dimexe": 0.2,
-                "dimexo": 0.2,
-                "dimtad": 1,
-            }
-        )
-        dim_len_top.render()
+        # Durchstich platzieren -----------------------------------------
+        pas    = passes[i]              # gleicher Index
+        p_w    = float(pas["width"])
+        p_off  = float(pas.get("offset", L1 - p_w/2))   # Default mittig „Naht“
+        
+        top_y = T_combo + CLR_BOT + TOP_SHIFT
+        top_left_1 = (cursor_x + CLR_LR, top_y)
+        top_left_2 = (cursor_x + CLR_LR + p_off + p_w, top_y)
 
-        # Bemaßung Draufsicht: vertikale
-        dim_wid_top = msp.add_linear_dim(
-            base=(top_left_x - 1.5, top_left_y),
-            p1=(top_left_x, top_left_y),
-            p2=(top_left_x, top_left_y + bg_width),
-            angle=90,
-            override={
-                "dimtxt": 0.25,
-                "dimclrd": 3,
-                "dimexe": 0.2,
-                "dimexo": 0.2,
-                "dimtad": 1,
-            }
-        )
-        dim_wid_top.render()
+        left_len   = max(0, min(L1, p_off))
+        right_len  = max(0, L_combo - (p_off + p_w))
 
-        # ===============================
-        # OBERFLÄCHENBEFESTIGUNG ("Randzone")
-        # ===============================
-        # Prüfen, ob surf_offset > 0 => Dann zeichnen
-        if surf_offset > 0:
-            surf_left   = top_left_x - surf_offset
-            surf_right  = top_left_x + bg_length + surf_offset
-            surf_bottom = top_left_y - surf_offset
-            surf_top    = top_left_y + bg_width  + surf_offset
-
-            outer_surface_top = [
-                (top_left_x - surf_offset,                  top_left_y - surf_offset),
-                (top_left_x + bg_length + surf_offset,      top_left_y - surf_offset),
-                (top_left_x + bg_length + surf_offset,      top_left_y + bg_width + surf_offset),
-                (top_left_x - surf_offset,                  top_left_y + bg_width + surf_offset),
-            ]
-            msp.add_lwpolyline(
-                outer_surface_top, 
-                close=True,
-                dxfattribs={"layer": "Oberflaeche"}
-            )
-
-            # Ggf. Text für Oberflächenbefestigung
-            if surf_text:
-                x_text = top_left_x + (bg_length / 2.0)  # Mitte horizontal
-                y_text = top_left_y + bg_width + surf_offset + 0.5
-
-                mtext_surf = msp.add_mtext(
-                    surf_text,
-                    dxfattribs={
-                        "layer": "Oberflaeche",
-                        "style": "ISOCPEUR",
-                        "char_height": 0.3
-                    },
+        # ---------- (1) Oberflächen zeichnen ----------
+        if left_len > 0 and i < len(surfaces) and surfaces[i]:
+            surf = surfaces[i]
+            off  = float(surf.get("offset", 0))
+            if off:
+                draw_surface_top(
+                    msp,
+                    trench_top_left=top_left_1,
+                    trench_length=left_len,
+                    trench_width=B1,
+                    offset=off,
+                    material_text=f"Oberfläche: {surf.get('material','')}"
                 )
-                mtext_surf.set_location(insert=(x_text, y_text), attachment_point=5)
 
-            # 4) VERTIKAL dimension (Maßkette)
-            dim_surf_wid = msp.add_linear_dim(
-                base=(surf_left - 2.0, surf_bottom),
-                p1=(surf_left, surf_bottom),          
-                p2=(surf_left, surf_top),             
-                angle=90,                             
-                override={
-                    "dimtxt": 0.25,
-                    "dimclrd": 3,
-                    "dimexe": 0.2,
-                    "dimexo": 0.2,
-                    "dimtad": 1,
-                }
+        if right_len > 0 and i+1 < len(surfaces) and surfaces[i+1]:
+            surf = surfaces[i+1]
+            off  = float(surf.get("offset", 0))
+            if off:
+                draw_surface_top(
+                    msp,
+                    trench_top_left=top_left_2,
+                    trench_length=right_len,
+                    trench_width=B2,
+                    offset=off,
+                    material_text=f"Oberfläche: {surf.get('material','')}"
+                )
+
+        # ------- linke Draufsicht zeichnen (falls >0) -------------
+        if left_len:
+            draw_trench_top(
+                msp,
+                top_left=(cursor_x + CLR_LR, top_y),
+                length=left_len,
+                width=B1
             )
-            dim_surf_wid.render()
 
-        # =========================
-        # Aufmaß-Text
-        # =========================
-        aufmass_text = "Aufmaß:\n"
-        aufmass_text += f"1) Baugraben:\n   L={bg_length} m, B={bg_width} m, T={bg_depth} m\n"
+        # ------- rechte Draufsicht zeichnen (falls >0) ------------
+        if right_len:
+            draw_trench_top(
+                msp,
+                top_left=(cursor_x + CLR_LR + p_off + p_w, top_y),
+                length=right_len,
+                width=B2
+            )
 
-        if (r_length > 0 or r_diameter > 0):
-            aufmass_text += f"2) Rohr:\n   L={r_length} m, Ø={r_diameter} m\n"
+        # ---------- Rohrdaten (links + rechts) ----------
+        pipe_left  = pipes[i]   if i   < len(pipes) else None
+        pipe_right = pipes[i+1] if i+1 < len(pipes) else None
 
-        # Oberflächenbefestigung
-        if surf_offset > 0:
-            aufmass_text += f"3) Oberflächenbefestigung:\n   Randzone: {surf_offset} m\n"
-            if surf_material:
-                aufmass_text += f"   Material: {surf_material}\n"
+        pipe_src = next((p for p in (pipe_left, pipe_right) if p and p.get("diameter")), None)
+        if pipe_src:
+            d = float(pipe_src["diameter"])
+            # durchgehendes Rohr zeichnen
+            draw_pipe_front(
+                msp,
+                origin_front=(cursor_x + CLR_LR, CLR_BOT),
+                trench_inner_length=L_combo,
+                diameter=d,
+            )
+            aufmass.append(f"Rohr {i+1}:  L={L_combo} m  Ø={d} m")
 
-        # z. B. links unten
-        text_x = 0.0
-        text_y = -3.0
-
-        mtext_aufmass = msp.add_mtext(
-            aufmass_text,
-            dxfattribs={
-                "layer": "Baugraben",
-                "style": "ISOCPEUR",
-                "char_height": 0.3
-            }
+        draw_pass_front(
+            msp,
+            trench_origin=origin_front,
+            trench_len=L_combo,
+            trench_depth=T_combo,
+            width=p_w,
+            offset=p_off,
+            clearance_left=CLR_LR,
+            clearance_bottom=CLR_BOT,
+            pattern=pas.get("pattern", "ANSI31"),
         )
-        mtext_aufmass.set_location(insert=(text_x, text_y), attachment_point=1)
 
-        file_id = str(uuid.uuid4())
-        dxf_filename = f"generated_{file_id}.dxf"
-        output_path = os.path.join("temp", dxf_filename)
-        os.makedirs("temp", exist_ok=True)
-        doc.saveas(output_path)
+        # Aufmaß ---------------------------------------------------------
+        aufmass.append(f"Durchstich {i+1}: B={p_w} m  Offset={p_off} m")
+        aufmass.append(f"Baugraben {i+1}+{i+2}: L={L_combo} m  B={B_combo} m  T={T_combo} m")
 
-        doc.saveas(output_path)
-        return output_path
+        # Cursor auf den Bereich *nach* BG2 setzen
+        cursor_x += L_combo + 2*CLR_LR + GAP_BG
+        i += 2        # zwei BGs auf einmal verarbeitet!
+
+    # ---------- Aufmaß-Block als MText ----------
+    msp.add_mtext(
+        "Aufmaß:\n" + "\n".join(aufmass),
+        dxfattribs={
+            "layer": "Baugraben",
+            "style": "ISOCPEUR",
+            "char_height": 0.3,
+        }
+    ).set_location(insert=(0, -3.0), attachment_point=1)
+
+    # ---------- Speichern ----------
+    out_dir = "temp"
+    os.makedirs(out_dir, exist_ok=True)
+    file_path = os.path.join(out_dir, f"generated_{uuid.uuid4()}.dxf")
+    doc.saveas(file_path)
+    return file_path
 
 # -----------------------------------------------------
 # Edit Element
@@ -501,8 +439,12 @@ Aufgabe:
 """
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
+            model="gpt-3.5-turbo-0125",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a JSON API."},
+                {"role": "user", "content": prompt},
+            ],
             max_tokens=500,
             temperature=0.0,
         )
@@ -553,10 +495,14 @@ Aktuelles JSON:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.0
+            model="gpt-3.5-turbo-0125",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a JSON API."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=500,
+            temperature=0.0,
         )
         raw_output = response.choices[0].message.content
         new_json = json.loads(raw_output)
@@ -573,580 +519,3 @@ Aktuelles JSON:
       "updated_json": session_data[session_id],
       "answer": new_json.get("answer", "")
     }
-
-# ---------------------------------------------
-# /generate-dxf/-Endpunkt:
-# ---------------------------------------------
-# @app.post("/generate-dxf/")
-# def generate_dxf(lv_text: str = Body(..., embed=True)):
-#     # JSON über OpenAI-API parsen
-#     prompt = OPENAI_PROMPT + f"\nLV-Text:\n{lv_text}"
-#     try:
-#         response = client.chat.completions.create(
-#             model="gpt-3.5-turbo",
-#             messages=[{"role": "user", "content": prompt}],
-#             max_tokens=500,
-#             temperature=0.2
-#         )
-        
-#         raw_output = response.choices[0].message.content
-#         parsed_json = json.loads(raw_output)
-
-#     except Exception as e:
-#         return {"status": "error", "message": str(e)}
-
-#     try:
-#         # 2) DXF-Dokument anlegen
-#         doc = ezdxf.new("R2018", setup=True)
-#         msp = doc.modelspace()
-
-#         doc.header["$LTSCALE"] = 1.0
-#         doc.header["$CELTSCALE"] = 1.0
-#         doc.header["$PSLTSCALE"] = 0
-
-#         # Linetype "DASHED"
-#         doc.linetypes.add(
-#             name="DASHED",
-#             pattern="A,.5,-.25",
-#             description="--  --  --  --",
-#             length=0.75
-#         )
-
-#         # Linetype "DASHED"
-#         doc.linetypes.add(
-#             name="DASHDOT",
-#             pattern="A,.5,-.25,0,-.25",
-#             description="--  --  --  --",
-#             length=0.75
-#         )
-
-#         # Layers
-#         doc.layers.new(name="Baugraben",    dxfattribs={"color":0})
-#         doc.layers.new(name="InnerRechteck",dxfattribs={"color":0})
-#         doc.layers.new(name="Zwischenraum", dxfattribs={"color":3})
-#         doc.layers.new(name="Rohr",         dxfattribs={"color":0})
-#         doc.layers.new(name="Durchstich",   dxfattribs={"color":0})
-#         doc.layers.new(name="Oberflaeche",  dxfattribs={"color":0, "linetype":"DASHED"})
-#         doc.layers.new(name="Symmetrie",    dxfattribs={"color":5, "linetype":"DASHDOT"})
-
-#         # 3) Variablen
-#         bg_length = 0.0
-#         bg_width  = 0.0
-#         bg_depth  = 0.0
-#         r_length  = 0.0
-#         r_diameter= 0.0
-#         ds_length = 0.0
-#         ds_width  = 0.0
-
-#         surf_length   = None
-#         surf_width    = None
-#         grav_width    = None
-
-#         # 4) JSON auslesen
-#         for element in parsed_json.get("elements", []):
-#             etype      = element.get("type","").lower()
-#             length_val = float(element.get("length",   0.0))
-#             width_val  = float(element.get("width",    0.0))
-#             depth_val  = float(element.get("depth",    0.0))
-#             diam_val   = float(element.get("diameter", 0.0))
-
-#             if "baugraben" in etype:
-#                 bg_length  = length_val
-#                 bg_width   = width_val
-#                 bg_depth   = depth_val
-#                 grav_width = width_val
-
-#             elif "rohr" in etype:
-#                 r_length   = length_val
-#                 r_diameter = diam_val
-
-#             elif ("oberflächenbefestigung" in etype 
-#                 or "gehwegplatten" in etype 
-#                 or "mosaikpflaster" in etype 
-#                 or "verbundpflaster" in etype):
-#                 surf_length = length_val
-#                 surf_width  = width_val
-
-#                 original_type = element.get("type", "")
-                
-#                 if "oberflächenbefestigung" in original_type.lower():
-#                     splitted = original_type.split("befestigung", 1)
-                    
-#                     material = splitted[1].strip() if len(splitted) > 1 else original_type
-#                     surf_type_text = f"Oberflächenbefestigung: {material}"
-#                 else:
-#                     surf_type_text = f"Oberflächenbefestigung: {original_type}"
-            
-#             elif "durchstich" in etype:
-#                 ds_length = float(element.get("length", 0.0))
-#                 ds_width  = float(element.get("width",  0.0))
-
-#                 print(ds_width)
-#                 print(ds_length)
-
-#         # =========================
-#         # VORDERANSICHT (Front)
-#         # =========================
-#         LEFT_RIGHT_OFFSET = 0.2
-#         BOTTOM_OFFSET     = 0.2
-
-#         min_width_for_baugraben = bg_length + 2*LEFT_RIGHT_OFFSET
-#         min_height_for_baugraben= bg_depth + BOTTOM_OFFSET
-
-#         # outer_front_length = max(surf_length, min_width_for_baugraben)
-#         # if surf_length is None, we use min_width_for_baugraben
-#         outer_front_length = 0.0
-#         if surf_length is not None:
-#             outer_front_length = max(surf_length, min_width_for_baugraben)
-#         else:
-#             outer_front_length = min_width_for_baugraben
-
-#         # outer_front_height = max(surf_width, min_height_for_baugraben)
-#         outer_front_height = 0.0
-#         if surf_width is not None:
-#             outer_front_height = max(surf_width, min_height_for_baugraben)
-#         else:
-#             outer_front_height = min_height_for_baugraben
-
-#         # Äußeres Rechteck (Front)
-#         outer_points_front = [
-#             (0, 0),
-#             (outer_front_length, 0),
-#             (outer_front_length, outer_front_height),
-#             (0, outer_front_height),
-#         ]
-#         msp.add_lwpolyline(
-#             outer_points_front,
-#             close=True,
-#             dxfattribs={"layer": "Baugraben"}
-#         )
-
-#         # (B) Inneres Rechteck (Baugraben):
-#         # offset_x= 0.5, offset_y= 0.5
-#         # size = bg_length x bg_depth
-#         offset_x = LEFT_RIGHT_OFFSET
-#         offset_y = BOTTOM_OFFSET
-
-#         inner_front = [
-#             (offset_x,               offset_y),
-#             (offset_x + bg_length,   offset_y),
-#             (offset_x + bg_length,   offset_y + bg_depth),
-#             (offset_x,               offset_y + bg_depth),
-#         ]
-#         msp.add_lwpolyline(
-#             inner_front,
-#             close=True,
-#             dxfattribs={"layer": "InnerRechteck"}
-#         )
-
-#         # Bemaßung (Länge)
-#         dim_length_inner_front = msp.add_linear_dim(
-#             base=(offset_x, offset_y - 1.0),
-#             p1=(offset_x, offset_y),
-#             p2=(offset_x + bg_length, offset_y),
-#             angle=0,
-#             override={
-#                 "dimtxt": 0.25,
-#                 "dimclrd": 3,
-#                 "dimexe": 0.2,
-#                 "dimexo": 0.2,
-#                 "dimtad": 1,
-#             }
-#         )
-#         dim_length_inner_front.render()
-
-#         # Bemaßung (Tiefe)
-#         dim_depth_inner = msp.add_linear_dim(
-#             base=(offset_x + bg_length + 1.0, offset_y),
-#             p1=(offset_x + bg_length, offset_y + bg_depth),
-#             p2=(offset_x + bg_length, offset_y),
-#             angle=90,
-#             override={
-#                 "dimtxt": 0.25,
-#                 "dimclrd": 3,
-#                 "dimexe": 0.2,
-#                 "dimexo": 0.2,
-#                 "dimtad": 1,
-#             }
-#         )
-#         dim_depth_inner.render()
-
-#         hatch = msp.add_hatch(color=4,dxfattribs={"layer":"Zwischenraum"})
-#         hatch.set_pattern_fill("EARTH",scale=0.05)
-#         hatch.paths.add_polyline_path(outer_points_front,is_closed=True,flags=const.BOUNDARY_PATH_OUTERMOST)
-#         hatch.paths.add_polyline_path(inner_front,is_closed=True)
-
-#         # Rohr
-#         rohr_height = r_diameter  # z.B. 0.15
-#         # "untere" Linie => y = offset_y
-#         rohr_y_bottom = offset_y
-#         # "obere" Linie => y = offset_y + r_diameter
-#         rohr_y_top    = offset_y + rohr_height
-
-#         rohr_x_left  = offset_x
-#         rohr_x_right = offset_x + bg_length
-
-#         rohr_points_f = [
-#             (rohr_x_left,  rohr_y_bottom),
-#             (rohr_x_right, rohr_y_bottom),
-#             (rohr_x_right, rohr_y_top),
-#             (rohr_x_left,  rohr_y_top),
-#         ]
-#         msp.add_lwpolyline(rohr_points_f, close=True, dxfattribs={"layer": "Rohr"})
-
-#         baugraben_x_text = offset_x + bg_length + 5.0
-#         baugraben_y_text = offset_y + (bg_depth / 2)
-
-#         txt_front = f"Baugraben\nL={bg_length}m\nB={bg_width}m\nT={bg_depth}m"
-#         msp.add_mtext(txt_front, dxfattribs={"layer": "Baugraben", "style": "ISOCPEUR", "char_height": 0.4}
-#         ).set_location(
-#             insert=(baugraben_x_text, baugraben_y_text),
-#             attachment_point=5
-#         )
-
-#         rohr_x_text = rohr_x_right + 3.0
-#         rohr_y_text = (rohr_y_bottom + rohr_y_top) / 2
-
-#         txt_rohr = f"Rohr\nL={r_length}m\nØ={r_diameter}m"
-#         mtext_rohr = msp.add_mtext(
-#             txt_rohr,
-#             dxfattribs={"layer": "Rohr", "style": "ISOCPEUR", "char_height": 0.3},
-#         )
-#         mtext_rohr.set_location(
-#             insert=(rohr_x_text, rohr_y_text),
-#             attachment_point=5
-#         )
-
-#         # Gestrichelte Symmetrie-Linie im Rohr:
-#         sym_line_y = (rohr_y_bottom + rohr_y_top) / 2
-#         msp.add_line(
-#             (rohr_x_left,  sym_line_y),
-#             (rohr_x_right, sym_line_y),
-#             dxfattribs={"layer": "Symmetrie"}
-#         )
-
-#         # === DURCHSTICH ===
-#         # 1) Mittelpunkt der Vorderansicht:
-#         # a) X-Koordinaten für den Durchstich (zentriert)
-#         if ds_length > 0:
-#           center_x = outer_front_length / 2
-#           ds_half = ds_length / 2
-#           ds_left_x = center_x - ds_half
-#           ds_right_x= center_x + ds_half
-
-#           # b) Y-Koordinaten: direkt an der oberen Kante vom äußeren Rechteck
-#           ds_bottom_y = rohr_y_top + 0.25
-#           ds_top_y    = outer_front_height
-#           actual_ds_height = ds_top_y - ds_bottom_y
-
-#           # c) Durchstich zeichnen
-#           durchstich_points_front = [
-#               (ds_left_x,  ds_bottom_y),
-#               (ds_right_x, ds_bottom_y),
-#               (ds_right_x, ds_top_y),
-#               (ds_left_x,  ds_top_y),
-#           ]
-#           msp.add_lwpolyline(
-#               durchstich_points_front,
-#               close=True,
-#               dxfattribs={"layer": "Durchstich"}
-#           )
-
-#           # d) Zweiter Hatch mit derselben EARTH-Schraffur
-#           hatch_ds = msp.add_hatch(color=4, dxfattribs={"layer": "Durchstich"})
-#           hatch_ds.set_pattern_fill("EARTH", scale=0.05)
-#           hatch_ds.paths.add_polyline_path(
-#               durchstich_points_front,
-#               is_closed=True,
-#               flags=const.BOUNDARY_PATH_OUTERMOST
-#           )
-
-#           # 4) Bemaßung (Horizontal)
-#           msp.add_linear_dim(
-#               base=(ds_left_x, ds_bottom_y + 1.5),
-#               p1=(ds_left_x, ds_bottom_y),
-#               p2=(ds_right_x, ds_bottom_y),
-#               angle=0,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           ).render()
-
-#           # ================================
-#           # 1) Maßkette: Baugraben (links) -> Durchstich (links)
-#           # ================================
-#           msp.add_linear_dim(
-#               base=(offset_x, ds_bottom_y + 1.5),      # Die "Basislinie" der Maßkette liegt 1.0 unterhalb
-#               p1=(offset_x, ds_bottom_y),             # Baugraben-Kante links
-#               p2=(ds_left_x, ds_bottom_y),            # Durchstich-Kante links
-#               angle=0,                                # Waagerecht messen
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           ).render()
-
-#           # ================================
-#           # 2) Maßkette: Durchstich (rechts) -> Baugraben (rechts)
-#           # ================================
-#           msp.add_linear_dim(
-#               base=(ds_right_x, ds_bottom_y + 1.5),    # Basislinie wieder ~1.0 unterhalb
-#               p1=(ds_right_x, ds_bottom_y),           # Durchstich-Kante rechts
-#               p2=(offset_x + bg_length, ds_bottom_y), # Baugraben-Kante rechts
-#               angle=0,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           ).render()
-
-#         # =========================
-#         # DRAUFSICHT (Top)
-#         # =========================
-#         # Äußeres Rechteck
-#         outer_length = surf_length if surf_length else bg_length
-#         outer_width  = surf_width  if surf_width  else bg_width
-
-#         # Inneres Rechteck => Baugraben => grav_width
-#         inner_width  = grav_width if grav_width else 1.0
-
-#         diff_total = outer_width - inner_width
-#         if diff_total < 0:
-#             diff_total = 0
-
-#         offset = diff_total / 2
-#         top_view_offset = outer_width + 1.5
-
-#         if ds_length <= 0:
-#           # Äußeres Rechteck => "Oberfläche"
-#           outer_points_top = [
-#               (0,              top_view_offset),
-#               (outer_length,   top_view_offset),
-#               (outer_length,   top_view_offset + outer_width),
-#               (0,              top_view_offset + outer_width),
-#           ]
-#           msp.add_lwpolyline(outer_points_top, close=True, dxfattribs={"layer":"Oberflaeche"})
-
-#           # Inner => offset an jeder Seite
-#           inner_top = [
-#               (offset,                     top_view_offset + offset),
-#               (outer_length - offset,      top_view_offset + offset),
-#               (outer_length - offset,      top_view_offset + (outer_width - offset)),
-#               (offset,                     top_view_offset + (outer_width - offset)),
-#           ]
-#           msp.add_lwpolyline(inner_top, close=True, dxfattribs={"layer": "InnerRechteck"})
-
-#           if surf_type_text:
-#               # Wir legen den Text in der Mitte ab oder oben:
-#               x_center = outer_length
-#               y_center = top_view_offset + outer_width + 0.5
-#               mtext_oberf = msp.add_mtext(
-#                   surf_type_text,
-#                   dxfattribs={"layer":"Oberflaeche", "style": "ISOCPEUR","char_height":0.3}
-#               )
-#               mtext_oberf.set_location(
-#                   insert=(x_center, y_center),
-#                   attachment_point=5  # MIDDLE_CENTER
-#               )
-
-#           # ---- Maßkette äußeres Rechteck (horizontal) ----
-#           dim_len_top_outer = msp.add_linear_dim(
-#               base=(0, top_view_offset - 0.5),   # Maßlinie etwas unterhalb
-#               p1=(0, top_view_offset),           # Linke untere Ecke
-#               p2=(outer_length, top_view_offset),# Rechte untere Ecke
-#               angle=0,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_len_top_outer.render()
-
-#           # ---- Maßkette äußeres Rechteck (vertikal) ----
-#           dim_wid_top_outer = msp.add_linear_dim(
-#               base=(-1.5, top_view_offset),       # Maßlinie etwas links
-#               p1=(0, top_view_offset),            # Linke untere Ecke
-#               p2=(0, top_view_offset + outer_width), # Linke obere Ecke
-#               angle=90,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_wid_top_outer.render()
-
-#           # ---- Maßkette inneres Rechteck (Beispiel hier nur vertikal) ----
-#           dim_wid_top_inner = msp.add_linear_dim(
-#               base=((offset - 1), top_view_offset + offset),
-#               p1=(offset, top_view_offset + offset),
-#               p2=(offset, top_view_offset + (outer_width - offset)),
-#               angle=90,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_wid_top_inner.render()
-#         else:
-#           rect1_length = (outer_length - ds_length) / 2
-#           if rect1_length < 0:
-#               rect1_length = 0
-#           rect2_length = rect1_length  # gleich lang
-
-#           # 2) ============= LINKER BAUGRABEN (x=0..rect1_length) =============
-#           outer_points_top_left = [
-#               (0,             top_view_offset),
-#               (rect1_length,  top_view_offset),
-#               (rect1_length,  top_view_offset + outer_width),
-#               (0,             top_view_offset + outer_width),
-#           ]
-#           msp.add_lwpolyline(outer_points_top_left, close=True, dxfattribs={"layer":"Oberflaeche"})
-
-#           inner_top_left = [
-#               (offset,                  top_view_offset + offset),
-#               (rect1_length - offset,   top_view_offset + offset),
-#               (rect1_length - offset,   top_view_offset + (outer_width - offset)),
-#               (offset,                  top_view_offset + (outer_width - offset)),
-#           ]
-#           msp.add_lwpolyline(inner_top_left, close=True, dxfattribs={"layer": "InnerRechteck"})
-
-#           # (Optional) TEXT (Oberflächenbefestigung) beim linken Baugraben
-#           if surf_type_text:
-#               x_center_left = rect1_length / 2
-#               y_center_left = top_view_offset + outer_width + 0.5
-#               mtext_oberf_left = msp.add_mtext(
-#                   surf_type_text,
-#                   dxfattribs={"layer": "Oberflaeche","style": "ISOCPEUR","char_height":0.3}
-#               )
-#               mtext_oberf_left.set_location(
-#                   insert=(x_center_left, y_center_left),
-#                   attachment_point=5  # MIDDLE_CENTER
-#               )
-
-#           # => Maßketten LINKER Baugraben (outer, inner)
-#           # (A) Äußeres Rechteck (horizontal)
-#           dim_len_left_outer = msp.add_linear_dim(
-#               base=(0, top_view_offset - 0.5),
-#               p1=(0, top_view_offset),
-#               p2=(rect1_length, top_view_offset),
-#               angle=0,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_len_left_outer.render()
-
-#           # 4) ============= RECHTER BAUGRABEN =============
-#           #    Startet bei x_offset_2 = rect1_length + ds_length
-#           x_offset_2 = rect1_length + ds_length
-
-#           outer_points_top_right = [
-#               (x_offset_2,                  top_view_offset),
-#               (x_offset_2 + rect2_length,   top_view_offset),
-#               (x_offset_2 + rect2_length,   top_view_offset + outer_width),
-#               (x_offset_2,                  top_view_offset + outer_width),
-#           ]
-#           msp.add_lwpolyline(
-#               outer_points_top_right, 
-#               close=True, 
-#               dxfattribs={"layer":"Oberflaeche"}
-#           )
-
-#           inner_top_right = [
-#               (x_offset_2 + offset,                top_view_offset + offset),
-#               (x_offset_2 + rect2_length - offset, top_view_offset + offset),
-#               (x_offset_2 + rect2_length - offset, top_view_offset + (outer_width - offset)),
-#               (x_offset_2 + offset,                top_view_offset + (outer_width - offset)),
-#           ]
-#           msp.add_lwpolyline(
-#               inner_top_right,
-#               close=True,
-#               dxfattribs={"layer": "InnerRechteck"}
-#           )
-
-#           # => Maßketten RECHTER Baugraben (outer, inner)
-#           # (A) Äußeres Rechteck (horizontal)
-#           dim_len_right_outer = msp.add_linear_dim(
-#               base=(x_offset_2, top_view_offset - 0.5),
-#               p1=(x_offset_2,               top_view_offset),
-#               p2=(x_offset_2 + rect2_length,top_view_offset),
-#               angle=0,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_len_right_outer.render()
-
-#           # ---- Maßkette äußeres Rechteck (vertikal) ----
-#           dim_wid_top_outer = msp.add_linear_dim(
-#               base=(-1.5, top_view_offset),       # Maßlinie etwas links
-#               p1=(0, top_view_offset),            # Linke untere Ecke
-#               p2=(0, top_view_offset + outer_width), # Linke obere Ecke
-#               angle=90,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_wid_top_outer.render()
-
-#           # ---- Maßkette inneres Rechteck (Beispiel hier nur vertikal) ----
-#           dim_wid_top_inner = msp.add_linear_dim(
-#               base=((offset - 1), top_view_offset + offset),
-#               p1=(offset, top_view_offset + offset),
-#               p2=(offset, top_view_offset + (outer_width - offset)),
-#               angle=90,
-#               override={
-#                   "dimtxt": 0.25,
-#                   "dimclrd": 3,
-#                   "dimexe": 0.2,
-#                   "dimexo": 0.2,
-#                   "dimtad": 1,
-#               }
-#           )
-#           dim_wid_top_inner.render()
-
-#         # Datei speichern
-#         file_id = str(uuid.uuid4())
-#         dxf_filename = f"generated_{file_id}.dxf"
-#         output_path = os.path.join("temp", dxf_filename)
-#         os.makedirs("temp", exist_ok=True)
-#         doc.saveas(output_path)
-
-#         return {
-#             "filename": dxf_filename, 
-#             "message": "DXF generated successfully"
-#         }
-
-#     except Exception as e:
-#         return {"status": "error", "message": f"Fehler beim DXF-Generieren: {str(e)}"}
