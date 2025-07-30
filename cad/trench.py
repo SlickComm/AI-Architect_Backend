@@ -9,6 +9,11 @@ LAYER_HATCH      = "Zwischenraum"
 HATCH_PATTERN = "EARTH"
 HATCH_SCALE   = 0.05
 
+DIM_TXT_H   = 0.2   # ⇦ neue Text­höhe (bisher 0.25)
+DIM_OFFSET  = 0.5    # ⇦ Abstand Maßkette → Rand (bisher 2.0)
+DIM_OFFSET_FRONT  = 0.7
+DIM_EXE_OFF = 0.1    # ⇦ Überstand/Versatz der Maßhilfslinien
+
 # ---------- Layer-Registrierung ----------
 def register_layers(doc: ezdxf.document.Drawing) -> None:
     if LAYER_TRENCH_OUT not in doc.layers:
@@ -53,12 +58,12 @@ def draw_trench_front(
     # Bemaßung
     dim = msp.add_linear_dim
     dim(
-        base=(inner[0][0], inner[0][1] - 1.0),
+        base=(inner[0][0], inner[0][1] - DIM_OFFSET_FRONT),
         p1=inner[0], p2=inner[1], angle=0,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
     dim(
-        base=(inner[1][0] + 1.0, inner[1][1]),
+        base=(inner[1][0] + DIM_OFFSET_FRONT, inner[1][1]),
         p1=inner[2], p2=inner[1], angle=90,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
@@ -87,12 +92,12 @@ def draw_trench_top(
 
     dim = msp.add_linear_dim
     dim(
-        base=(x, y - 1.0),
+        base=(x, y - DIM_OFFSET),
         p1=(x, y), p2=(x + length, y), angle=0,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
     dim(
-        base=(x - 1.5, y),
+        base=(x - DIM_OFFSET, y),
         p1=(x, y), p2=(x, y + width), angle=90,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
@@ -100,9 +105,9 @@ def draw_trench_top(
 # ---------- Hilfs-Style ----------
 def _dim_style():
     return {
-        "dimtxt": 0.25,
+        "dimtxt": DIM_TXT_H,
         "dimclrd": 3,
-        "dimexe": 0.2,
-        "dimexo": 0.2,
-        "dimtad": 1,
+        "dimexe": DIM_EXE_OFF,
+        "dimexo": DIM_EXE_OFF,
+        "dimtad": 0,
     }

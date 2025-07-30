@@ -6,6 +6,10 @@ DEFAULT_PAT = "EARTH"
 DEFAULT_COL = 0   
 PASS_BOTTOM_GAP = 0.5
 
+DIM_TXT_H   = 0.2   # ⇦ neue Text­höhe (bisher 0.25)
+DIM_OFFSET  = 0.5    # ⇦ Abstand Maßkette → Rand (bisher 2.0)
+DIM_EXE_OFF = 0.1    # ⇦ Überstand/Versatz der Maßhilfslinien
+
 def register_layers(doc: ezdxf.document.Drawing) -> None:
     if LAYER_PASS not in doc.layers:
         doc.layers.new(name=LAYER_PASS,
@@ -60,16 +64,16 @@ def draw_pass_front(
 
     # --- Bemaßung ---------------------------------------------------
     msp.add_linear_dim(
-        base=(x0, y1 + 0.7),        # 0.7 m über Oberkante
+        base=(x0, y1 + DIM_OFFSET),        # 0.7 m über Oberkante
         p1=(x0, y1),
         p2=(x1, y1),
         angle=0,                    # horizontal
         override={
-            "dimtxt": 0.25,
+            "dimtxt": DIM_TXT_H,
             "dimclrd": 3,
-            "dimexe": 0.2,
-            "dimexo": 0.2,
-            "dimtad": 1,            # Text über der Linie
+            "dimexe": DIM_EXE_OFF,
+            "dimexo": DIM_EXE_OFF,
+            "dimtad": 0,            # Text über der Linie
         },
         dxfattribs={"layer": LAYER_PASS}
     ).render()

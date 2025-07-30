@@ -5,8 +5,14 @@ from typing import Tuple
 # ---------------------- feste Konstanten ----------------------
 LAYER_PIPE = "Rohr"
 LAYER_SYM  = "Symmetrie"
+LAYER_DIM  = "Bemassung_Rohr"
 
 CLEARANCE_SIDE = 0.50          # 0.5 m Abstand links + rechts
+
+# Dimension-Parameter
+DIM_TXT_H   = 0.20                # Texthöhe
+DIM_OFFSET  = 0.45                # Abstand Maßlinie → Rohr
+DIM_EXE_OFF = 0.10                # Überstand/Versatz der Maßhilfslinien
 
 # ------------------- Layer-Registrierung ----------------------
 def register_layers(doc: ezdxf.document.Drawing) -> None:
@@ -43,3 +49,19 @@ def draw_pipe_front(msp,
         (right, (y_bot + y_top) / 2),
         dxfattribs={"layer": LAYER_SYM}
     )
+
+    # Horizontal (Rohrlänge)
+    msp.add_linear_dim(
+        base=(left, y_bot - DIM_OFFSET),     # Maßlinie UNTER dem Rohr
+        p1=(left, y_bot),
+        p2=(right, y_bot),
+        angle=0,
+        override={
+            "dimtxt": DIM_TXT_H,
+            "dimclrd": 3,
+            "dimexe": DIM_EXE_OFF,
+            "dimexo": DIM_EXE_OFF,
+            "dimtad": 0,                     # Text mittig auf Maßlinie
+        },
+        dxfattribs={"layer": LAYER_DIM}
+    ).render()

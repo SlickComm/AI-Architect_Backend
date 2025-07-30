@@ -7,6 +7,10 @@ LAYER_SURF   = "Oberflaeche"      # gestrichelte Linie
 LAYER_DIM = "Bemassung_Oberfl"  # (optional) eigenes Layer für Maßkette
 DASHED_NAME  = "DASHED"           # wir benutzen denselben Linetype
 
+DIM_TXT_H   = 0.2   # ⇦ neue Text­höhe (bisher 0.25)
+DIM_OFFSET  = 0.75    # ⇦ Abstand Maßkette → Rand (bisher 2.0)
+DIM_EXE_OFF = 0.1    # ⇦ Überstand/Versatz der Maßhilfslinien
+
 def register_layers(doc: ezdxf.document.Drawing) -> None:
     """legt Layer + Linetype nur einmalig an"""
     if DASHED_NAME not in doc.linetypes:
@@ -47,29 +51,19 @@ def draw_surface_top(msp,
          (right, bottom), (left, bottom)],
         close=True, dxfattribs={"layer": LAYER_SURF}
     )
-
-    # Beschriftung (mittig über dem Rand)
-    if material_text:
-        txt_x = tlx + trench_length / 2
-        txt_y = top - 0.5
-        mtext = msp.add_mtext(material_text,
-                              dxfattribs={"layer": LAYER_SURF,
-                                          "char_height": 0.3,
-                                          "style": "ISOCPEUR"})
-        mtext.set_location(insert=(txt_x, txt_y), attachment_point=5)
-
+    
     # Maßkette (vertikal links)
     msp.add_linear_dim(
-        base=(left - 2.0, bottom),      # Linie links vom Rand
+        base=(left - DIM_OFFSET, bottom),      # Linie links vom Rand
         p1=(left, bottom),
         p2=(left, top),
         angle=90,
         override={
-            "dimtxt": 0.25,
+            "dimtxt": DIM_TXT_H,
             "dimclrd": 3,
-            "dimexe": 0.2,
-            "dimexo": 0.2,
-            "dimtad": 1,
+            "dimexe": DIM_EXE_OFF,
+            "dimexo": DIM_EXE_OFF,
+            "dimtad": 0,
         },
         dxfattribs={"layer": LAYER_DIM}
     ).render()
