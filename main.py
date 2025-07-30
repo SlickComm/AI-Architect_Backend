@@ -12,10 +12,10 @@ from dotenv import load_dotenv
 import uuid
 import json
 
-from cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top
-from cad.pipe import draw_pipe_front, register_layers
-from cad.surface import draw_surface_top, register_layers as reg_surface
-from cad.passages import register_layers as reg_pass, draw_pass_front
+from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top
+from app.cad.pipe import draw_pipe_front, register_layers
+from app.cad.surface import draw_surface_top, register_layers as reg_surface
+from app.cad.passages import register_layers as reg_pass, draw_pass_front
 
 app = FastAPI()
 
@@ -473,7 +473,7 @@ def _generate_dxf_intern(parsed_json) -> str:
                 trench_inner_length=L_combo,
                 diameter=d,
             )
-            aufmass.append(f"Rohr {i+1}:  L={L_combo} m  Ø={d} m")
+            aufmass.append(f"Rohr {i+1}:  l={L_combo} m  Ø={d} m")
 
         draw_pass_front(
             msp,
@@ -488,7 +488,7 @@ def _generate_dxf_intern(parsed_json) -> str:
         )
 
         # Aufmaß ---------------------------------------------------------
-        aufmass.append(f"Durchstich {i+1}: B={p_w} m  Offset={p_off} m")
+        aufmass.append(f"Durchstich {i+1}: b={p_w} m  Versatz={p_off} m")
         aufmass.append(f"Baugraben {i+1}: l={left_len:.2f} m  b={B1} m  t={T1} m")
         aufmass.append(f"Baugraben {i+2}: l={right_len:.2f} m  b={B2} m  t={T2} m")
 
