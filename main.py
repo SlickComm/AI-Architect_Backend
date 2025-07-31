@@ -31,7 +31,7 @@ session_data = {}
 # CORS, falls nötig
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000, http://188.68.54.146:3334/"], 
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"], 
