@@ -1,0 +1,1370 @@
+[
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "0100",
+    "description": "Für Transporte von Straßenaufbruchmaterial von der Baustelle zum Lagerplatz des TBA bzw. NGA oder umgekehrt werden mit den nachstehenden Positionen die Kosten vergütet",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "1000",
+    "description": "Großpflaster, Granit- und Großplatten",
+    "price": 31.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "2000",
+    "description": "Kleinpflaster, Pflaster aus Beton",
+    "price": 17.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "3000",
+    "description": "Gehwegplatten, Rasengittersteine",
+    "price": 9.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "4000",
+    "description": "Mosaikpflaster",
+    "price": 8.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "5000",
+    "description": "Borde, Streckschicht und Kantensteine, jeder Art",
+    "price": 8.3,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "01",
+    "Pos": "6000",
+    "description": "Straßenaufbruch (soweit nicht in den nachstehenden Positionen erfasst) abfahren und entsorgen.",
+    "price": 45.0,
+    "unit": "m³"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "0100",
+    "description": "Pflastermaterial frei Verwendungsstelle liefern",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "1000",
+    "description": "Großpflaster",
+    "price": 67.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "2000",
+    "description": "Kleinpflaster",
+    "price": 45.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "3000",
+    "description": "Granit- und Großplatten",
+    "price": 124.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "4000",
+    "description": "Gehwegplatten",
+    "price": 24.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "5000",
+    "description": "Rasengittersteine",
+    "price": 25.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "6000",
+    "description": "Pflaster aus Beton",
+    "price": 30.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "7000",
+    "description": "Mosaikpflaster",
+    "price": 37.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "8000",
+    "description": "Borde Breite > 24 cm",
+    "price": 89.8,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "8100",
+    "description": "Borde Breite  >= 10 cm und <=24 cm",
+    "price": 31.9,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "02",
+    "Pos": "8200",
+    "description": "Streckschicht und Kantensteine jeder Art (Breite < 10 cm)",
+    "price": 15.3,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "1000",
+    "description": "Bituminöses Material bei gleichzeitg zu bauenden Flächen > 100 m2 abfräsen einschl. Abfuhr zur freien Verwendung d = 4 cm",
+    "price": 14.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "1050",
+    "description": "Bituminöses Material einschl. Abfuhr zur freien Verwendung  d = 20 cm",
+    "price": 47.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "2000",
+    "description": "Beton einschl. Abfuhr zur freien Verwendung  d = 25 cm",
+    "price": 59.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "2010",
+    "description": "Zulage für bewehrten Beton 14,40 psch €/m²",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "2050",
+    "description": "HGT einschl. Abfuhr zur freien Verwendung  d = 20 cm",
+    "price": 27.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "3000",
+    "description": "Fugen in bituminöses Material im oberen Bereich im Zuge des Tiefbaues 2/3 einschneiden     d = 12 cm Schnittiefe",
+    "price": 12.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "3500",
+    "description": "Fugen durch bituminöses Material im Zuge des Strassenbaus durchschneiden  d = 25 cm",
+    "price": 24.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "3505",
+    "description": "Fugen durch Beton/Unterbeton/HGT/Pflaster jeder Art durchschneiden d = 25 cm",
+    "price": 29.7,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "3510",
+    "description": "Zulage für Fugen in bewehrten Beton beim Durchschneiden  13,10 psch €/m",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "4000",
+    "description": "Großpflaster in Sand- oder Kiesbettung, Abrechnungsdicke 18 cm",
+    "price": 17.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "4100",
+    "description": "Großpflaster in Zementmörtel einschl. Abfuhr zur freien Verwendung Abrechnungsdicke 18 cm; Unterbau wird gesondert vergütet",
+    "price": 60.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "4200",
+    "description": "Großpflaster in Zementmörteleinschl. reinigen Abrechnungsdicke 18 cm; Unterbau wird gesondert vergütet",
+    "price": 81.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "5000",
+    "description": "Kleinpflaster/ Verbundpflaster in Sand- oder Kiesbettung, Abrechnungsdicke 10 cm",
+    "price": 13.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "5100",
+    "description": "Kleinpflaster/ Verbundpflaster in Zementmörteleinschl. Abfuhr zur freien Verwendung Abrechnungsdicke 10 cm; Unterbau wird gesondert vergütet",
+    "price": 54.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "5200",
+    "description": "Kleinpflaster in Zementmörtel einschl. reinigen Abrechnungsdicke 10 cm; Unterbau wird gesondert vergütet",
+    "price": 96.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "6000",
+    "description": "Mosaikpflaster in Sand- oder Kiesbettung Abrechnungsdicke 5 cm",
+    "price": 6.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "6100",
+    "description": "Mosaikpflaster in Zementmörtel einschl. Abfuhr zur freien Verwendung Abrechnungsdicke 5 cm; Unterbau wird gesondert vergütet",
+    "price": 26.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "6200",
+    "description": "Mosaikpflaster in Zementmörtel einschl. reinigen Abrechnungsdicke 5 cm; Unterbau wird gesondert vergütet",
+    "price": 64.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "7000",
+    "description": "Ober- und Unterbauten aus Packe, Schotter, Geröll, Ziegel- und Betonbrocken, Recyclingmaterial, Promenadenbefestigungen etc. d = 20 cm",
+    "price": 25.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "7100",
+    "description": "Gehwegbefestigung (Gehwegplatten) in Sand- oder Kiesbettung oder in Zementmörtel",
+    "price": 13.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "7200",
+    "description": "Gehwegbefestigung (Granit- und Großplatten) in Sand- oder Kiesbettung",
+    "price": 26.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "7300",
+    "description": "Rasengittersteine einschl. Verfüllung (Boden mit Rasen) und Unterbau",
+    "price": 22.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "8000",
+    "description": "Erschwerniszulage für Fugenverguss für Pflaster jeder Art einschl. reinigen",
+    "price": 36.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "9000",
+    "description": "Borde jeder Art mit einer Breite > 24 cm in Kies oder Beton",
+    "price": 35.5,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "9100",
+    "description": "Borde jeder Art mit einer Breite >= 10 cm und <=24 cm in Kiesoder Beton auch mit Rückenstütze",
+    "price": 22.1,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "9200",
+    "description": "Streckschichten und Kantensteine (Breite < 10 cm)  in Kies oder Beton auch mit Rückenstütze",
+    "price": 11.9,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "9500",
+    "description": "Bodenaushub im Bereich von Rand- und Reststreifen einschl. abfahren und entsorgen bzw. verwerten  b = 0,10 m Dicke <= 0,30 m",
+    "price": 1.7,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "10",
+    "Pos": "9600",
+    "description": "Bodenaushub im Bereich von Rand- und Reststreifen einschl. abfahren und entsorgen bzw. verwerten  b = 0,10 m Dicke > 0,30 m",
+    "price": 4.6,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "900",
+    "description": "Steinstraßenbau Dokumentation bei zwei dynamischen Plattendruckversuchen",
+    "price": 44.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "905",
+    "description": "Steinstraßenbau Dokumentation bei einem dynamischen Plattendruckversuch",
+    "price": 36.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "910",
+    "description": "Asphalt- und Betondecken Dokumentation bei zwei dynamischen Plattendruckversuchen",
+    "price": 70.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "915",
+    "description": "Asphalt- und Betondecken Dokumentation bei einem dynamischen Plattendruckversuch",
+    "price": 65.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "950",
+    "description": "Steinstraßenbau / Asphalt- und Betondecken in der Fahrbahn Feststellung und Dokumentation der nicht übernahmefähigen Güte von Leistungen des Vorgewerkes nur zur internen Verrechnung!",
+    "price": 85.6,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1000",
+    "description": "Planum herstellen",
+    "price": 3.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1050",
+    "description": "Bituminöse provisorische Befestigungen (Asphaltttragschicht (BU) oder Binder) d = 15 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 62.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1060",
+    "description": "Handeinbau in Fahrbahnen Asphalttragschicht AC 22 T S, Bitumen 50/70 bzw. Ausbauasphalt mit resultierendem Bindemittel 30/45 d = 10 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 53.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1062",
+    "description": "Handeinbau in Fahrbahnen Asphalttragschicht AC 22 T N, - Bitumen 70/100 bzw. Ausbauasphalt mit resultierendem Bindemittel 50/70 d = 10 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 52.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1065",
+    "description": "Handeinbau in Geh- und Radwegen Asphalttragschicht AC 22 T L,Bitumen 70/100 bzw. Ausbauasphalt mit resultierendem Bindemittel 50/70 d = 6 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 34.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1067",
+    "description": "Handeinbau in Geh- und Radwegen Asphalttragschicht AC 16 T L, Bitumen 70/100 bzw. Ausbauasphalt mit resultierendem Bindemittel 50/70 d = 6 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 34.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1080",
+    "description": "Handeinbau in Fahrbahnen Asphaltbinderschicht AC 22 B S, Bitumen 25/55-55 bzw. Ausbauasphalt mit viskositätssenkenden Additiven; stetig gestuft d =  8cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 57.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1081",
+    "description": "Handeinbau in Fahrbahnen Asphaltbinderschicht AC 22 B S, Bitumen 30/45 bzw. Ausbauasphalt mit viskositätssenkenden Additiven; stetig gestuft d =  8cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 56.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1082",
+    "description": "Handeinbau in Fahrbahnen Asphaltbinderschicht AC 16 B S, Bitumen 25/55-55 bzw. Ausbauasphalt mit viskositätssenkenden Additiven; stetig gestuft d =  8cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 57.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1083",
+    "description": "Handeinbau in Fahrbahnen Asphaltbinderschicht AC 16 B S,Bitumen 30/45 bzw. Ausbauasphalt mit viskositätssenkenden Additiven d =  8cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 56.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1084",
+    "description": "Handeinbau in Fahrbahnen in Stauraumflächen und Haltestellenbereichen Asphaltbinderschicht AC 16 B S, Bitumen 10/40-65 bzw. Ausbauasphalt, stetig gestuft d =  8cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 58.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1110",
+    "description": "Handeinbau in Fahrbahnen Gussasphalt MA 11 S mit Bitumen 30/45, mit grau/antrazitfarbigen Mineralstoffen d = 4 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 52.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1112",
+    "description": "Handeinbau in Fahrbahnen Gussasphalt MA 8 S mit Bitumen 30/45, mit grau/antrazitfarbigen Mineralstoffen d = 3 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 41.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1113",
+    "description": "Handeinbau in Fahrbahnen in Stauraumflächen und Haltestellenbereichen Gussasphalt MA 11 S mit grau/antrazitfarbigen Mineralstoffen mit polymermodifizierten Bitumen 10/40-65 Eindringtiefe <= 1,5 mm und Zunahme der Eindringtiefe <= 0,3 mm d = 4 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 52.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1115",
+    "description": "Handeinbau in Geh- und Radwegen Gussasphalt MA 8 N Gussasphalt mit grau/antrazitfarbigen Mineralstoffen mit Bitumen 30/45 d = 4 cm einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 52.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1125",
+    "description": "Bitumenemulsion für Schichtenverbund (Haftverbund) im Handeinbau in Fahrbahnen C40BF1-S vor dem Aufbringen von Asphaltbinder, Asphaltbeton oder Splittmastixasphalt ist die gereinigte Unterlage mit einer Bitumenemulsion anzusprühen einschl. Materiallieferung",
+    "price": 2.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1140",
+    "description": "Handeinbau Asphalttragdeckschicht AC 16 TD Bindemittel 70/100 einschl. Materiallieferung, d = 10 cm, Nachweis durch Wiegebelege",
+    "price": 60.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1160",
+    "description": "Fugen in Asphaltdeckschicht herstellen und verschließen einschl. Liefern aller Materialen",
+    "price": 20.8,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1200",
+    "description": "Kaltasphalt einschl. Materiallieferung  d = 5 cm",
+    "price": 39.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1300",
+    "description": "keilförmige Anrampung an Bordkanten herstellen und später wieder entfernen einschl. Materiallieferung",
+    "price": 28.3,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "1500",
+    "description": "Unterbeton (Tragschicht aus Beton, Betontragschicht) DIN EN 206-1 und DIN 1045-2; C 20/25; C 30/37; F2/F3; XF4; XM2 mit Fließmittel, ggf. auf Vliesstoff d = 20 cm einschl. Materiallieferung, Nachweis durch Lieferschein bei > 0,5 m3              7  4  , 0  0   €  / m   ²",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2000",
+    "description": "Hydraulisch gebundene Tragschicht HGT 0/32 oder Hydraulisch gebundene Tragschicht HGT 0/8 d = 15 cm einschl. Materiallieferung, Nachweis durch Lieferschein bei > 0,5 m3",
+    "price": 37.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2100",
+    "description": "Scheinfugen in Unterbeton oder hydraulisch gebundener Tragschicht HGT 0/32 oder hydraulisch gebundener Tragschicht HGT 0/8 herstellen",
+    "price": 4.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2150",
+    "description": "Fahrbahnbeton  aus Straßenbeton, DIN EN 206-1 und DIN 1045-2; C 30/37; F2/F3; XF4; XM2; mit Fließmittel max. Korndurchmesser 16/22/32 mm,gemäß allgemeinem Rundschreiben Straßenbau (ARS) des BMVBS Nr. 04/2013 vom 22.01.2013, Gesteinskörnungen mit besonderen Anforderungen zur Vermeidung von Alkali-Kieselsäure- Reaktionen (AKR), auf Vliesstoff Schnellbeton gemäß M BEB, Ausgabe 2009, Abs. 6.1 d = 20 cm einschl. Materiallieferung, Nachweis durch Lieferschein",
+    "price": 120.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2151",
+    "description": "Pressfuge herstellen",
+    "price": 17.2,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2152",
+    "description": "Randraumfuge (Raumfuge) herstellen",
+    "price": 22.1,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2153",
+    "description": "Scheinfuge (Fugenkerbe) im neuen Betonfeld herstellen",
+    "price": 19.6,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2154",
+    "description": "Dübel mit Dübelhalter herstellen",
+    "price": 22.3,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2160",
+    "description": "Zulage für Straßenbeton in anthrazit",
+    "price": 23.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2200",
+    "description": "Schraubdübel in vorh. Betondecke einbauen",
+    "price": 24.1,
+    "unit": "Stück"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2250",
+    "description": "Schraubanker in vorh. Betondecke einbauen",
+    "price": 22.0,
+    "unit": "Stück"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "2300",
+    "description": "Scheinfugen in vorhandenen Betonfeldern herstellen",
+    "price": 14.8,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3000",
+    "description": "Schotter, Recyclingmaterial, Promenadenbefestigungen etc.",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3100",
+    "description": "aus vorhandenem Material in der Fahrbahn d = 15 cm",
+    "price": 8.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3200",
+    "description": "aus Recyclingmaterial in der Fahrbahn d = 15 cm einschl. Materiallieferung, Nachweis durch Lieferschein",
+    "price": 25.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3210",
+    "description": "Zulage zum Rohrgraben im Gehweg beim Einbau von Recyclingmaterial d = 15 cm einschl. Materiallieferung, Nachweis durch Lieferschein",
+    "price": 13.32,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3300",
+    "description": "Ungebundene Tragschicht aus Naturmaterial (Natursteinschotter) (z.B. in Wasserschutzgebieten, unter Pflasterdecken) in der Fahrbahn d = 15 cm einschl. Materiallieferung, Nachweis durch Lieferschein",
+    "price": 44.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3400",
+    "description": "Handeinbau Dränasphalttragschicht d = 20 cm, einschl. Materiallieferung, Nachweis durch Wiegebelege",
+    "price": 103.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "3500",
+    "description": "Handeinbau Dränbetontragschicht Druckfestigkeit >=20 MN/m² d = 20 cm einschl. Materiallieferung, Nachweis durch Lieferschein",
+    "price": 77.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "4000",
+    "description": "Großpflaster in ungebundener Bettung setzen und Abrammen, einschließlich Lieferung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands",
+    "price": 80.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "4500",
+    "description": "Großpflaster in gebundener Bettung wasserdurchlässig setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, Nachweis durch Lieferschein",
+    "price": 130.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "4501",
+    "description": "Großpflaster in gebundener Bettung wasserundurchlässig setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands Nachweis durch Lieferschein",
+    "price": 96.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "5000",
+    "description": "Kleinsteinpflaster in ungebundener Bettung setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands",
+    "price": 66.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "5500",
+    "description": "Kleinsteinpflaster in gebundener Bettung wasserdurchlässig setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, Nachweis durch Lieferschein",
+    "price": 147.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "5501",
+    "description": "Kleinsteinpflaster in gebundener Bettung wasserundurchlässig setzen und Abrammen, einschließlich Lieferung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands Nachweis durch Lieferschein",
+    "price": 77.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6000",
+    "description": "Granit- und Großplatten auf Bettung und Fugenmaterial (Gemisch aus Gesteinskörnungen), jeweilige Körnung in Abhängigkeit des vorgefundenen Zustands",
+    "price": 72.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6100",
+    "description": "Gehwegplatten auf Bettungsschicht (Gemisch aus Gesteinskörnungen) oder in hydraulischem Mörtel",
+    "price": 53.4,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6200",
+    "description": "Rasengittersteinbefestigung Vorhandene Rasengittersteine auf Bettungsschicht legen und Verfüllung (Boden mit Rasen) einbauen einschl. Lieferung aller Materialien. Den Rasen beregnen, schneiden und  pflegen. Das Mähgut ist abzufahren und zu entsorgen",
+    "price": 47.7,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6300",
+    "description": "Pflaster aus Beton in Fahrbahnen Pflaster aus Beton in ungebundener Bettung setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands",
+    "price": 59.6,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6305",
+    "description": "Pflaster aus Beton in Fahrbahnen Pflaster aus Beton in gebundener Bettung wasserdurchlässig  setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, Nachweis durch Lieferschein",
+    "price": 93.1,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6310",
+    "description": "Pflaster aus Beton in Fahrbahnen Pflaster aus Beton in gebundener Bettung wasserundurchlässig setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands Nachweis durch Lieferschein",
+    "price": 60.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6320",
+    "description": "Pflaster aus Beton in Geh- und Radwegen Pflaster aus Beton in ungebundener Bettung setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands",
+    "price": 57.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6325",
+    "description": "Pflaster aus Beton Geh- und Radwegen Pflaster aus Beton in gebundener Bettung wasserdurchlässig  setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, Nachweis durch Lieferschein",
+    "price": 90.5,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6330",
+    "description": "Pflaster aus Beton Geh- und Radwegen Pflaster aus Beton in gebundener Bettung wasserundurchlässig setzen und Abrammen, einschließlich Liefrung des Bettungs- und Fugenmaterials, in Abhängigkeit des vorgefundenen Zustands Nachweis durch Lieferschein",
+    "price": 55.3,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "6400",
+    "description": "Mosaikpflaster auf Bettung und Fugenmaterial (Gemisch aus Gesteinskörnungen), jeweilige Körnung in Abhängigkeit des vorgefundenen Zustands oder aus Mörtel M 20 nach DIN EN 998-2 E",
+    "price": 102.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "7000",
+    "description": "Zulage für Fugenverguss für Pflaster jeder Art, 3 cm tief bituminös vergießen einschl. Materiallieferung",
+    "price": 41.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8000",
+    "description": "Borde jeder Art mit einer Breite > 24 cm in Kies",
+    "price": 70.1,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8100",
+    "description": "Borde jeder Art mit einer Breite  >= 10 cm und <= 24 cm in Kies",
+    "price": 53.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8200",
+    "description": "Borde jeder Art mit einer Breite > 24 cm in Beton einschl. Liefern des Betons",
+    "price": 98.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8300",
+    "description": "Borde jeder Art mit einer Breite >= 10 cm und <=24 cm in Beton auch mit Rückenstütze einschl. Liefern des Betons für Fundament und Rückenstütze",
+    "price": 77.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8400",
+    "description": "Streckschichten und Kantensteine (Breite < 10 cm) in Kies",
+    "price": 20.5,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8500",
+    "description": "Streckschichten und Kantensteine (Breite < 10 cm) in Beton auch mit Rückenstütze einschl. Liefern des Betons für Fundament und Rückenstütze",
+    "price": 35.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8600",
+    "description": "Busbordstein mit Anfahrtshöhe bzw. Einstiegshöhe 16 cm auf ein mind. 20 cm dickes Betonfundament mit einer mind. 15 cm dicken einseitigen Rückenstütze aus Beton setzen, inkl. Liefern des Betons (Druckfestigkeit mind. 15 N/mm², inkl. Liefern des Busbordsteins",
+    "price": 293.6,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "8700",
+    "description": "Übergangstein Busbordstein auf Hochbordstein mit Anfahrtshöhe bzw. Einstiegshöhe 16 cm auf ein ca. 20 cm dickes Betonfundament  mit einer mind. 15 cm dicken einseitigen Rückenstütze aus Beton setzen, inkl. Liefern des Betons (Druckfestigkeit mind. 15 N/mm², inkl. Liefern des Übergangssteins",
+    "price": 361.5,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "9000",
+    "description": "Kappenlöcher in Gehwegplatten oder Pflaster aus Beton anarbeiten",
+    "price": 49.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "20",
+    "Pos": "9500",
+    "description": "Umrandungsplatten, für Schieber-, Ventile und Straßenkappen (Die Umrandungsplatte wird vom AG geliefert)",
+    "price": 30.8,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "0100",
+    "description": "Bei der Abrechnung der endgültigen Fahrbahnmarkierung gilt als Mindestabrechnungssumme:",
+    "price": 154.0,
+    "unit": "psch"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "1000",
+    "description": "Fahrbahnmarkierung, 3 mm dick, aus thermo- oder kaltplastischem Material durch Fräsen demarkieren, ein Abbrennen der Markierung ist nicht zulässig, einschl. fachgerechter Entsorgung des Fräsguts abgerechnet wird die entfernte markierte Fläche bei Pfeil, Buchstabe, Ziffer, Verkehrsschild und Piktogramm ergibt sich die Fläche aus dem kleinsten umschliessenden Rechteck",
+    "price": 29.0,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "1100",
+    "description": "Versiegelung der gefrästen Flächen mit heißverarbeitbarer bitumenhaltiger Sanierungsmasse 0/3 mm, einschl. der Reinigung und wenn erforderlich Trocknung der Unterlage, Verarbeitung entsprechend der Herstellerangaben, Abstreuen mit 1/3 mm oder 2/5 mm Edelsplitt und Abwalzen mit einer Handwalze",
+    "price": 40.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2000",
+    "description": "Fahrbahnmarkierung gemäß RMS und ZTV M 02 als Verkehrsfreigabemarkierung herstellen",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2010",
+    "description": "Schrägstrichgatter in Sperrflächen (VZ 298 gemäß StVO), \"Schraffen\" Breite: 0,25 m",
+    "price": 7.6,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2020",
+    "description": "Leit- oder Sperrlinie (VZ 295, 296, 298, 299, 340 u.a. gemäß StVO), unterbrochen oder durchgehend Breite: 0,12 m",
+    "price": 4.2,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2030",
+    "description": "Leitlinie (VZ 295, 296, 299, 340 u.a. gemäß StVO), unterbrochen oder durchgehend Breite: 0,25 m",
+    "price": 7.4,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2040",
+    "description": "Haltelinie (VZ 293 oder 294 gemäß StVO) Breite: 0,50 m",
+    "price": 14.8,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2050",
+    "description": "Wartelinie (VZ 341gemäß StVO) Breite: 0,50 m x 0,50 m mit 0,25 m Lücke",
+    "price": 16.9,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2060",
+    "description": "Radfahrsymbol gemäß RP 228 Größe: 1,00 m x 1,30 m",
+    "price": 47.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2070",
+    "description": "Richtungspfeil (RP 319) geradeaus, nach rechts ab, nach links ab 1,30 m lang",
+    "price": 34.8,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2080",
+    "description": "Radfahrfurt Breite: 0,25 m Länge: 0,50 m",
+    "price": 7.6,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2090",
+    "description": "Fußgängerfurt Breite: 0,12 m Länge: 0,50 m",
+    "price": 3.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2100",
+    "description": "Richtungspfeile (Z297 StVO) - RP 235/236 geradeaus, rechts ab, nach rechts, links ab, nach links 5,0 m lang",
+    "price": 72.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2110",
+    "description": "Richtungspfeile (Z297 StVO) - RP 235 geradeaus und rechts ab, geradeaus und links ab, rechts und links ab 5,0 m lang",
+    "price": 77.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2120",
+    "description": "Parkstandmarkierung für Schwerbehinderte gemäß RP 411, ohne Behinderten-Symbol gemäß RP 227",
+    "price": 65.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2130",
+    "description": "Parkstandmarkierung für Ärzte gemäß RP 413",
+    "price": 256.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2140",
+    "description": "Kennzeichnen einer Gehwegabsenkung gemäß RP 202",
+    "price": 289.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2150",
+    "description": "Schriftzug B U S 4,0 m lang",
+    "price": 316.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2160",
+    "description": "Kinder-Symbol nach RP 226/A",
+    "price": 191.1,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2170",
+    "description": "Rollstuhlfahrer-Symbol nach RP 227, Größe: 1,00 m x 1,30 m oder Fußgänger-Symbol nach RP 230 1,10 m lang",
+    "price": 50.1,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2180",
+    "description": "VZ - dreifarbig - Z.136 gemäß RP 223 Größe: 2,0 m x 5,0 m",
+    "price": 283.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2190",
+    "description": "VZ - zweifarbig - Z.205 gemäß RP 222 Größe: 2,0 m x 5,0 m",
+    "price": 263.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2200",
+    "description": "VZ - zweifarbig - Z.206 gemäß RP 221 Größe: 2,65 m x 4,0 m",
+    "price": 316.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2210",
+    "description": "VZ - zweifarbig - Z.237 Durchmesser: 0,60 m",
+    "price": 112.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2220",
+    "description": "VZ - dreifarbig - Z.274 gemäß RP 224 Größe: 2,0 m x 5,0 m",
+    "price": 316.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2230",
+    "description": "VZ - einfarbig weiß - Z.274 gemäß RP 224 Größe: 2,4 m x 5,0 m",
+    "price": 237.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "2240",
+    "description": "Rote Radwegmarkierung mit einer zugelassen Beschichtungsmasse als Dünnschicht in zwei Arbeitsgängen herstellen Griffigkeitswert mindestens 45 SRT",
+    "price": 26.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3000",
+    "description": "Fahrbahnmarkierung gemäß RMS und ZTV M 02 in Kaltplastik herstellen",
+    "price": null,
+    "unit": null
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3010",
+    "description": "Schrägstrichgatter in Sperrflächen (VZ 298 gemäß StVO), \"Schraffen\" Breite: 0,25 m",
+    "price": 8.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3020",
+    "description": "Leit- oder Sperrlinie (VZ 295, 296, 298, 299, 340 u.a. gemäß StVO), unterbrochen oder durchgehend Breite: 0,12 m",
+    "price": 4.7,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3030",
+    "description": "Leitlinie (VZ 295, 296, 299, 340 u.a. gemäß StVO), unterbrochen oder durchgehend Breite: 0,25 m",
+    "price": 8.0,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3040",
+    "description": "Haltelinie (VZ 293 od. 294 gemäß StVO) Breite: 0,50 m",
+    "price": 16.5,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3050",
+    "description": "Wartelinie (VZ 341gem. StVO) Breite: 0,50 m x 0,50 m mit 0,25 m Lücke",
+    "price": 25.2,
+    "unit": "m"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3060",
+    "description": "Radfahrsymbol gemäß RP 228 Größe: 1,00 m x 1,30 m",
+    "price": 72.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3070",
+    "description": "Richtungspfeil (RP 319) geradeaus, nach rechts ab, nach links ab 1,30 m lang",
+    "price": 36.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3080",
+    "description": "Radfahrfurt Breite: 0,25 m Länge: 0,50 m",
+    "price": 7.6,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3090",
+    "description": "Fußgängerfurt Breite: 0,12 m Länge: 0,50 m",
+    "price": 3.6,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3100",
+    "description": "Richtungspfeile (Z297 StVO) - RP 235/236 geradeaus, rechts ab, nach rechts, links ab, nach links 5,0 m lang",
+    "price": 89.6,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3110",
+    "description": "Richtungspfeile (Z297 StVO) - RP 235 geradeaus und rechts ab, geradeaus und links ab, rechts und links ab 5,0 m lang",
+    "price": 95.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3120",
+    "description": "Parkstandmarkierung für Schwerbehinderte gem. RP 411, ohne Behinderten-Symbol gemäß RP 227",
+    "price": 105.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3130",
+    "description": "Parkstandmarkierung für Ärzte gemäß RP 413",
+    "price": 467.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3140",
+    "description": "Kennzeichnen einer Gehwegabsenkung gemäß RP 202",
+    "price": 336.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3150",
+    "description": "Schriftzug B U S 4,0 m lang",
+    "price": 316.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3160",
+    "description": "Kinder-Symbol nach RP 226/A",
+    "price": 191.1,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3170",
+    "description": "Rollstuhlfahrer-Symbol nach RP 227 Größe: 1,00 m x 1,30 m oder Fußgänger-Symbol nach RP 230 1,10 m lang",
+    "price": 72.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3180",
+    "description": "VZ - dreifarbig - Z.136 gemäß RP 223 Größe: 2,0 m x 5,0 m",
+    "price": 289.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3190",
+    "description": "VZ - zweifarbig - Z.205 gemäß RP 222 Größe: 2,0 m x 5,0 m",
+    "price": 263.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3200",
+    "description": "VZ - zweifarbig - Z.206 gemäß RP 221 Größe: 2,65 m x 4,0 m",
+    "price": 316.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3210",
+    "description": "VZ - zweifarbig - Z.237 Durchmesser: 0,60 m",
+    "price": 250.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3220",
+    "description": "VZ - dreifarbig - Z.274 gemäß RP 224 Größe: 2,0 m x 5,0 m",
+    "price": 322.8,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3230",
+    "description": "VZ - einfarbig weiß - Z.274 gemäß RP 224 Größe: 2,4 m x 5,0 m",
+    "price": 256.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "3240",
+    "description": "Rote Radwegmarkierung Griffigkeitswert mindestens 60 SRT",
+    "price": 32.9,
+    "unit": "m²"
+  },
+  {
+    "T1": "2",
+    "T2": "50",
+    "Pos": "4000",
+    "description": "Zulageposition für das Vorbereiten der Markierungsfläche auf Betonfahrbahnen mit Kugelstrahlverfahren oder Wasser- hochdruckverfahren abgerechnet wird die zu markierende Fläche bei Pfeil, Buchstabe, Ziffer, Verkehrsschild, und Piktogramm ergibt sich die Fläche aus dem kleinsten umschliessenden Rechteck",
+    "price": 31.9,
+    "unit": "m²"
+  }
+]

@@ -1,0 +1,398 @@
+[
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "a",
+    "description": "Hydrant DN 80 einbauen",
+    "price": 284.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "b",
+    "description": "Umführung DN 100 mit Hydrant einbauen",
+    "price": 1352.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "c",
+    "description": "Umführung DN 150 mit Hydrant einbauen",
+    "price": 1585.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "d",
+    "description": "Umführung DN 100 ohne Hydrant einbauen",
+    "price": 1093.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "e",
+    "description": "Umführung DN 150 ohne Hydrant einbauen",
+    "price": 1326.3,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "f",
+    "description": "Entlüftung DN 80 einbauen",
+    "price": 690.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "g",
+    "description": "Entlüftung DN 40 einbauen",
+    "price": 175.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "h",
+    "description": "Entlüftung DN 12 einbauen",
+    "price": 119.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "i",
+    "description": "Hinweisschilder anbauen",
+    "price": 35.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "j",
+    "description": "Umführung DN 200 mit Hydrant einbauen",
+    "price": 2046.9,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "k",
+    "description": "Umführung DN 250 mit Hydrant einbauen",
+    "price": 2389.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "l",
+    "description": "Umführung DN 200 ohne Hydrant einbauen",
+    "price": 1787.8,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2001",
+    "sub": "m",
+    "description": "Umführung DN 250 ohne Hydrant einbauen",
+    "price": 2130.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "a",
+    "description": "Hydrant DN 80 ausbauen und abfahren",
+    "price": 168.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "b",
+    "description": "Entlüftungsventil DN 25 ausbauen und abfahren",
+    "price": 70.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "c",
+    "description": "Entlüftungsschraube DN 12 ausbauen und abfahren",
+    "price": 17.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "d",
+    "description": "Entlüftungshahn DN 32 ausbauen und abfahren",
+    "price": 38.5,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "e",
+    "description": "Hinweisschilder abbauen und abfahren",
+    "price": 11.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2002",
+    "sub": "f",
+    "description": "Straßenkappe, Gestänge und Hülsrohre",
+    "price": 22.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2003",
+    "sub": "a",
+    "description": "Hydrant DN 80 ausbauen und lagern",
+    "price": 216.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2003",
+    "sub": "b",
+    "description": "Entlüftungsventil DN 25 ausbauen und lagern",
+    "price": 88.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2003",
+    "sub": "c",
+    "description": "Entlüftungsschraube DN 12 ausbauen und lagern",
+    "price": 22.2,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "10",
+    "Pos": "2003",
+    "sub": "d",
+    "description": "Entlüftungshahn DN 32 ausbauen und lagern",
+    "price": 48.8,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1100",
+    "sub": "",
+    "description": "Vorbereiten zum Entgasen",
+    "price": 360.8,
+    "unit": "psch"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1200",
+    "sub": "",
+    "description": "Entgasen",
+    "price": 26.7,
+    "unit": "Std"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1300",
+    "sub": "",
+    "description": "Herstellen von Ausschnitten",
+    "price": 204.0,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1400",
+    "sub": "",
+    "description": "Entleeren mit Motorpumpe",
+    "price": 34.7,
+    "unit": "Std"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1500",
+    "sub": "",
+    "description": "Entleeren mit Hochdruckspülwagen",
+    "price": 202.1,
+    "unit": "Std"
+  },
+  {
+    "T1": "5",
+    "T2": "40",
+    "Pos": "1600",
+    "sub": "",
+    "description": "Entsorgungskosten für Restablagerungen mit Nachweis",
+    "price": 50.2,
+    "unit": "m³"
+  },
+  {
+    "T1": "5",
+    "T2": "45",
+    "Pos": "1000",
+    "sub": "",
+    "description": "Straßenkappen jeder Art aus- und einbauen",
+    "price": 66.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "45",
+    "Pos": "1100",
+    "sub": "",
+    "description": "Schieberstangen einschl. Straßenkappe jeder Art aus- und einbauen",
+    "price": 107.7,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "1000",
+    "sub": "",
+    "description": "Mauerwerk für Kanäle und Sonderbauwerke herstellen",
+    "price": 1266.6,
+    "unit": "m³"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "2000",
+    "sub": "",
+    "description": "Schneiden von Klinkermauerwerk oder Beton d = 25 cm",
+    "price": 179.2,
+    "unit": "m"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "2500",
+    "sub": "",
+    "description": "Zulage für Schneiden von Stahlbeton d = 25 cm",
+    "price": 19.7,
+    "unit": "m"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "3100",
+    "sub": "",
+    "description": "Stahlbeton DIN EN 206-1 und DIN 1045-2; C35/45, XC4, XD3, XA2, WU  (B35 alt)",
+    "price": 397.4,
+    "unit": "m³"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "3200",
+    "sub": "",
+    "description": "Stahlbeton DIN EN 206-1 und DIN 1045-2; C30/37, XC4, XD1, XA1, WU  oder Beton DIN EN 206-1 und DIN 1045-2; C35/45,  XA2, WU (B 25 alt)",
+    "price": 386.3,
+    "unit": "m³"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "3300",
+    "sub": "",
+    "description": "Stahlbeton DIN EN 206-1 und DIN 1045-2; C16/20,  XC1, XC2 und Beton DIN EN 206-1 und DIN 1045-2; C12/15,  X0 (B 15 alt)",
+    "price": 372.4,
+    "unit": "m³"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "4000",
+    "sub": "",
+    "description": "Injektionsschläuche bzw. Kompressionsprofile liefern und einbauen",
+    "price": 29.7,
+    "unit": "m"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "5000",
+    "sub": "",
+    "description": "Betonstahl Bst IV S bzw. M nach DIN 488",
+    "price": 2632.5,
+    "unit": "t"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "5500",
+    "sub": "",
+    "description": "Schalung Erstellen und Vorhalten",
+    "price": 74.8,
+    "unit": "m²"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "6000",
+    "sub": "",
+    "description": "Betongüteprüfung",
+    "price": 508.4,
+    "unit": "Stck"
+  },
+  {
+    "T1": "5",
+    "T2": "50",
+    "Pos": "7000",
+    "sub": "",
+    "description": "Gerinne, Auskleidung von Gerinne und Auftritt für Schachtkammern im S und M und R - Netz nach bzw. analog Rgbl 280 aus Stahlbetonfertigteilen oder in Ortbeton",
+    "price": 472.2,
+    "unit": "m²"
+  },
+  {
+    "T1": "5",
+    "T2": "60",
+    "Pos": "1100",
+    "sub": "",
+    "description": "Transport des Kanalsandes zur Entsorgungsstelle Werden keine Entsorgungskosten nachgewiesen, erfolgt keine Vergütung des Transportes",
+    "price": 10.12,
+    "unit": "t"
+  },
+  {
+    "T1": "5",
+    "T2": "60",
+    "Pos": "1200",
+    "sub": "",
+    "description": "Mindestabrechnungssumme, sofern Entsorgungskosten nachgewiesen werden",
+    "price": 77.33,
+    "unit": "psch"
+  }
+]

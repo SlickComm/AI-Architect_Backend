@@ -13,7 +13,8 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5) Quellcode kopieren
-COPY main.py /app/
+COPY main.py .
+COPY app/ ./app/
 
 # 6) Exponiere den Port (Standard: 80 oder 8000)
 EXPOSE 80
@@ -21,4 +22,3 @@ EXPOSE 80
 # 7) Befehl zum Starten des Servers
 #    uvicorn: app-Datei=app, FastAPI-Instanz=app
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
-
