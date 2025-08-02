@@ -12,10 +12,16 @@ from dotenv import load_dotenv
 import uuid
 import json
 
+from pydantic import BaseModel
+from typing import List
+
 from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top
-from app.cad.pipe import draw_pipe_front, register_layers
+from app.cad.pipe import draw_pipe_front, register_layers as reg_pipe
 from app.cad.surface import draw_surface_top, register_layers as reg_surface
 from app.cad.passages import register_layers as reg_pass, draw_pass_front
+
+from app.services.lv_matcher import best_matches_batch, parse_aufmass
+from app.invoices.builder import make_invoice
 
 app = FastAPI()
 
@@ -36,6 +42,13 @@ app.add_middleware(
     allow_methods=["*"], 
     allow_headers=["*"], 
 )
+
+class MatchRequest(BaseModel):
+    session_id: str
+
+class InvoiceRequest(BaseModel):
+    session_id: str
+    mapping:   List[dict]
 
 # -----------------------------------------------------
 # 1) START SESSION
@@ -243,7 +256,13 @@ def generate_dxf_by_session(session_id: str):
     current_json = session_data[session_id]
 
     try:
-        dxf_file_path = _generate_dxf_intern(current_json)
+        dxf_file_path, aufmass_str = _generate_dxf_intern(current_json)
+
+        session_data[session_id]["elements"].append({
+            "type": "aufmass",
+            "text": aufmass_str
+        })
+
         return FileResponse(
             dxf_file_path,
             media_type="application/dxf",
@@ -252,14 +271,14 @@ def generate_dxf_by_session(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def _generate_dxf_intern(parsed_json) -> str:
+def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     # ---------- DXF-Grundgerüst ----------
     doc = ezdxf.new("R2018", setup=True)
     msp = doc.modelspace()
 
     reg_trench(doc)
+    reg_pipe(doc)
     reg_surface(doc)
-    register_layers(doc)
     reg_pass(doc)
 
     doc.header["$LTSCALE"]  = 1.0
@@ -492,7 +511,6 @@ def _generate_dxf_intern(parsed_json) -> str:
         aufmass.append(f"Baugraben {i+1}: l={left_len:.2f} m  b={B1} m  t={T1} m")
         aufmass.append(f"Baugraben {i+2}: l={right_len:.2f} m  b={B2} m  t={T2} m")
 
-
         # Cursor auf den Bereich *nach* BG2 setzen
         cursor_x += L_combo + 2*CLR_LR + GAP_BG
         i += 2        # zwei BGs auf einmal verarbeitet!
@@ -512,7 +530,7 @@ def _generate_dxf_intern(parsed_json) -> str:
     os.makedirs(out_dir, exist_ok=True)
     file_path = os.path.join(out_dir, f"generated_{uuid.uuid4()}.dxf")
     doc.saveas(file_path)
-    return file_path
+    return file_path, "\n".join(aufmass)
 
 # -----------------------------------------------------
 # Edit Element
@@ -682,3 +700,25 @@ Lösche das beschriebene Element jetzt.
       "updated_json": session_data[session_id],
       "answer": new_json.get("answer", "")
     }
+
+# -----------------------------------------------------
+# Match LV with Aufmass
+# -----------------------------------------------------
+@app.post("/match-lv/")
+async def match_lv(data: MatchRequest):
+    sess = session_data.get(data.session_id) or {}
+    aufmass_txt = next((e["text"] for e in sess.get("elements",[])
+                        if e.get("type")=="aufmass"), "")
+    lines = parse_aufmass(aufmass_txt)
+    mapping = await best_matches_batch(lines)
+    return {"mapping": mapping}
+
+# -----------------------------------------------------
+# Generate Invoice
+# -----------------------------------------------------
+@app.post("/invoice/")
+def build_invoice(req: InvoiceRequest):
+    file = f"temp/invoice_{uuid.uuid4()}.pdf"
+    make_invoice(file, company="Muster GmbH", mapping=req.mapping)
+    return FileResponse(file, media_type="application/pdf",
+                        filename="Rechnung.pdf")
