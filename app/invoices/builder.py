@@ -34,6 +34,7 @@ def make_invoice(file: str, company: str, mapping: list):
         L, B, T = row.get("L"), row.get("B"), row.get("T")
 
         if qty is None:
+            print("❌ Fehlerhafter Mapping-Eintrag:", row)
             raise ValueError("qty fehlt im Mapping-Eintrag")
 
         pos_full = ".".join(str(x) for x in (

@@ -2,69 +2,109 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List
 from fastapi.responses import FileResponse
+from dotenv import load_dotenv
 
 import re
+import os
 import uuid, pathlib
+import json
 
-from app.utils.session_manager import session_data
-from app.services.lv_matcher import best_matches_batch, parse_aufmass
-from app.invoices.builder import make_invoice
+from app.utils.session_manager import session_manager
+from app.services.lv_matcher     import best_matches_batch, parse_aufmass
+from app.invoices.builder       import make_invoice
 
-router = APIRouter()
+from openai import AsyncOpenAI
 
-# --- Pydantic ---
+# Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
+load_dotenv()
+
+# OpenAI-Key
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+router = APIRouter()  
+
+CONFIDENCE_THRESHOLD = 0.8
+
+# ---------- Pydantic ----------
 class MatchRequest(BaseModel):
     session_id: str
 
 class InvoiceRequest(BaseModel):
     session_id: str
-    mapping:   List[dict]
+    mapping   : List[dict]
 
-# -------- /match-lv ----------
+# ---------- GPT-Helfer ----------
+async def extract_dims_gpt(line: str) -> dict:
+    prompt = (
+        "Extrahiere aus folgendem Aufmaßtext die Maße als JSON mit den "
+        "Feldern L, B, T (in Meter, falls vorhanden):\n"
+        f"{line}\n"
+        "Antworte nur mit JSON, z.B. {\"L\": 5.0, \"B\": 1.0, \"T\": 2.0}"
+    )
+    resp = await async_client.chat.completions.create(
+        model            = "gpt-4o-mini",
+        temperature      = 0.0,
+        response_format  = {"type": "json_object"},
+        messages = [
+            {"role": "system", "content": "Du bist ein Assistent für Bauaufmaße."},
+            {"role": "user",   "content": prompt},
+        ],
+        max_tokens = 100,
+    )
+    return json.loads(resp.choices[0].message.content)
+
+# ---------- /match-lv ----------
 @router.post("/match-lv/")
 async def match_lv(req: MatchRequest):
-    sess = session_data.get(req.session_id) or {}
-    aufmass_txt = next((e["text"] for e in sess.get("elements", [])
-                        if e.get("type") == "aufmass"), "")
-    if not aufmass_txt:
+    sess = session_manager.get_session(req.session_id)
+    if not sess.get("elements"):
+        raise HTTPException(404, "Session unknown oder empty")
+
+    # Alle Aufmaß-Texte sammeln und den letzten nehmen
+    texts = [e["text"] for e in sess["elements"] if e.get("type") == "aufmass"]
+    if not texts:
         raise HTTPException(400, "Aufmaß fehlt – zuerst DXF erstellen")
+    aufmass_txt = texts[-1]
 
-    lines   = parse_aufmass(aufmass_txt)          # ['l=5m b=1m t=2m', …]
-    results = await best_matches_batch(lines)      # GPT-Treffer
+    # Zeilen extrahieren & Matching durchführen
+    lines   = parse_aufmass(aufmass_txt)
+    results = await best_matches_batch(lines)
 
-    def _dims(line: str):
-        m = re.search(r"([\d.,]+)\s*[x×]\s*([\d.,]+)\s*[x×]\s*([\d.,]+)", line)
-        if m:                                         # 5x1x2-Schreibweise
-            return map(lambda s: float(s.replace(",", ".")), m.groups())
+    if len(lines) != len(results):
+        raise HTTPException(
+            500,
+            f"Mismatch: {len(lines)} Aufmaßzeilen vs. {len(results)} GPT-Treffer"
+        )
 
-        def _pick(rx):                               # l= … b= … t= …
-            m2 = re.search(rx, line, flags=re.I)
-            return float(m2.group(1).replace(",", ".")) if m2 else 0.0
+    assigned  = []
+    to_review = []
 
-        return _pick(r"l\s*=\s*([\d.,]+)"), \
-               _pick(r"b\s*=\s*([\d.,]+)"), \
-               _pick(r"t\s*=\s*([\d.,]+)")
-
-    mapping = []
     for line, res in zip(lines, results):
-        L, B, T = _dims(line)
-        print("🔍", line, "→", (L, B, T))  
-        mapping.append({
-            "aufmass" : line,
-            "L"       : L,
-            "B"       : B,
-            "T"       : T,
-            "qty"     : L,              # Multiplikator = Länge
-            "match"   : res["match"],
+        dims = await extract_dims_gpt(line)
+        base = {
+            "aufmass":      line,
+            "L":            dims.get("L", 0),
+            "B":            dims.get("B", 0),
+            "T":            dims.get("T", 0),
+            "qty":          dims.get("L", 0),
+            "confidence":   res["confidence"],
             "alternatives": res["alternatives"],
-            "confidence"  : res["confidence"],
-        })
-    return {"mapping": mapping}
+        }
+        if res["confidence"] >= CONFIDENCE_THRESHOLD:
+            # sichere Matches
+            base["match"] = res["match"]
+            assigned.append(base)
+        else:
+            # unsichere → nur Vorschläge
+            to_review.append(base)
 
-print("🔍", line, "→", _parse_dims(line))
+    return {
+        "assigned":  assigned,
+        "to_review": to_review
+    }
 
-# -------- /invoice ----------
-@router.post("/invoice/")
+# ---------- /invoice ----------
+@router.post("/invoice")
 def build_invoice(req: InvoiceRequest):
     pathlib.Path("temp").mkdir(exist_ok=True)
     pdf = f"temp/invoice_{uuid.uuid4()}.pdf"

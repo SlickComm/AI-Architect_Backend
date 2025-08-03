@@ -1,17 +1,15 @@
 from fastapi import FastAPI, Body, HTTPException  
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-
-from openai import OpenAI
-
-import ezdxf
 from ezdxf.enums import const
 
+import ezdxf
 import os
-from dotenv import load_dotenv
 import uuid
 import json
 
+from dotenv import load_dotenv
+from openai import OpenAI
 from pydantic import BaseModel
 from typing import List
 
@@ -22,6 +20,9 @@ from app.cad.passages import register_layers as reg_pass, draw_pass_front
 
 from app.services.lv_matcher import best_matches_batch, parse_aufmass
 from app.invoices.builder import make_invoice
+from app.routes import billing_routes
+
+from app.utils.session_manager import session_manager
 
 app = FastAPI()
 
@@ -30,9 +31,6 @@ load_dotenv()
 
 # OpenAI-Key
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Global variable for session
-session_data = {}
 
 # CORS, falls nötig
 app.add_middleware(
@@ -50,31 +48,30 @@ class InvoiceRequest(BaseModel):
     session_id: str
     mapping:   List[dict]
 
+app.include_router(billing_routes.router, tags=["Billing"])
+
 # -----------------------------------------------------
 # 1) START SESSION
 # -----------------------------------------------------
-@app.post("/start-session/")
+@app.post("/start-session")
 def start_session():
     """
     Erzeugt eine neue Session-ID,
     legt in session_data[...] = {"elements":[]} ab,
     und gibt session_id zurück.
     """
-    new_session_id = str(uuid.uuid4())
-    session_data[new_session_id] = {
-        "elements": []
-    }
-    return {"session_id": new_session_id}
+    return session_manager.create_session()
 
 # -----------------------------------------------------
 # ADD ELEMENT
 # -----------------------------------------------------
-@app.post("/add-element/")
+@app.post("/add-element")
 def add_element(session_id: str, description: str = Body(..., embed=True)):
-    if session_id not in session_data:
-        raise HTTPException(status_code=400, detail="Session not found.")
-
-    current_json = session_data[session_id]
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session unknown")
+    
+    current_json = session
 
     prompt = f"""
 Du bist eine reine JSON-API und darfst ausschließlich gültiges JSON
@@ -207,69 +204,64 @@ ANTWORTFORMAT  (genau so!)
 }}
 """
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": "You are a JSON API."},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=500,
-            temperature=0.0,
-        )
-        raw_output = response.choices[0].message.content
-        new_json = json.loads(raw_output)
+    resp = client.chat.completions.create(
+        model            = "gpt-3.5-turbo-0125",
+        response_format  = {"type": "json_object"},
+        temperature      = 0.0,
+        max_tokens       = 500,
+        messages = [
+            {"role": "system", "content": "You are a JSON API."},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    new_json = json.loads(resp.choices[0].message.content)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Fehler ChatGPT: {str(e)}")
-
-    # Die neue JSON-Struktur (elements + answer) in der Session speichern
     added = new_json.get("new_elements") or new_json.get("elements") or []
     if not isinstance(added, list):
-        raise HTTPException(400, "Antwort enthielt keine gültige Element-Liste.")
+        raise HTTPException(400, "Antwort enthielt keine Element-Liste")
 
-    # ② Session initialisieren (falls Nutzer direkt /add-element aufruft)
-    session = session_data.setdefault(session_id, {"elements": []})
-
-    # ③ Anhängen statt Überschreiben
-    session["elements"].extend(added)
-
-    # ④ optionale Antwort des Modells weitergeben
-    answer_txt = new_json.get("answer", "")
+    # ⑤ Session aktualisieren
+    current_json["elements"].extend(added)
+    session_manager.update_session(session_id, current_json)
 
     # Dann an den Client beides zurücksenden
     return {
-      "status": "ok",
-      "updated_json": session,
-      "answer": answer_txt
+        "status"      : "ok",
+        "updated_json": current_json,
+        "answer"      : new_json.get("answer", "")
     }
 
 # -----------------------------------------------------
-# GENERATE DXF
+#  DXF generieren und Session aktualisieren
 # -----------------------------------------------------
-@app.post("/generate-dxf-by-session/")
+@app.post("/generate-dxf-by-session")
 def generate_dxf_by_session(session_id: str):
-    if session_id not in session_data:
-        raise HTTPException(status_code=400, detail="Session not found.")
-
-    current_json = session_data[session_id]
+    # 1) Session laden --------------------------------
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
 
     try:
-        dxf_file_path, aufmass_str = _generate_dxf_intern(current_json)
+        # 2) DXF + Aufmaß erzeugen ---------------------
+        dxf_file, aufmass_txt = _generate_dxf_intern(session)
 
-        session_data[session_id]["elements"].append({
+        # 3) Aufmaß in die Session einhängen -----------
+        session.setdefault("elements", [])
+        session["elements"].append({
             "type": "aufmass",
-            "text": aufmass_str
+            "text": aufmass_txt,
         })
+        session_manager.update_session(session_id, session)
 
+        # 4) Datei zurückgeben -------------------------
         return FileResponse(
-            dxf_file_path,
+            dxf_file,
             media_type="application/dxf",
-            filename=os.path.basename(dxf_file_path),
+            filename=os.path.basename(dxf_file),
         )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, f"DXF-Fehler: {e}")
 
 def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     # ---------- DXF-Grundgerüst ----------
@@ -535,16 +527,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 # -----------------------------------------------------
 # Edit Element
 # -----------------------------------------------------
-@app.post("/edit-element/")
-def edit_element(
-    session_id: str,
-    instruction: str = Body(..., embed=True)
-):
-
-    if session_id not in session_data:
-        raise HTTPException(status_code=400, detail="Session not found.")
-
-    current_json = session_data[session_id]
+@app.post("/edit-element")
+def edit_element(session_id: str,instruction: str = Body(..., embed=True)):
+    session = session_manager.get_session(session_id)
 
     # Hier das prompt an ChatGPT formulieren
     prompt = f"""
@@ -581,7 +566,7 @@ OUTPUT-FORMAT  (genau so!)
 ---------------------------------------------
 AKTUELLES JSON
 ---------------------------------------------
-{json.dumps(current_json, indent=2)}
+{json.dumps(session, indent=2)}
 ---------------------------------------------
 JETZT AUFGABE
 ---------------------------------------------
@@ -599,40 +584,33 @@ JETZT AUFGABE
             max_tokens=500,
             temperature=0.0,
         )
-        raw_output = response.choices[0].message.content
-        new_json = json.loads(raw_output)
+        data = json.loads(resp.choices[0].message.content)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Fehler ChatGPT: {str(e)}")
+        raise HTTPException(500, f"Fehler ChatGPT: {e}")
 
-    # JSON übernehmen
-    session_data[session_id] = {
-      "elements": new_json["elements"]
-    }
+    # 4) Antwort prüfen -------------------------------------------------
+    if not isinstance(data.get("elements"), list):
+        raise HTTPException(500, "Antwort enthielt kein gültiges 'elements'-Array")
+
+    # 5) Session mutieren & speichern ----------------------------------
+    session["elements"] = data["elements"]
+    session_manager.update_session(session_id, session)
 
     return {
-      "status": "ok",
-      "updated_json": session_data[session_id],
-      "answer": new_json.get("answer", "")
+        "status": "ok",
+        "updated_json": session,
+        "answer": data.get("answer", "")
     }
 
 # -----------------------------------------------------
 # Delete Element
 # -----------------------------------------------------
-@app.post("/remove-element/")
-def remove_element(
-    session_id: str,
-    instruction: str = Body(..., embed=True)
-):
-    """
-    Beispiel-Instruktion: "Lösche das Rohr."
-    oder "Entferne die Oberflächenbefestigung Gehwegplatten."
-    """
-
-    if session_id not in session_data:
-        raise HTTPException(status_code=400, detail="Session not found.")
-
-    current_json = session_data[session_id]
+@app.post("/remove-element")
+def remove_element(session_id: str, instruction: str = Body(..., embed=True)):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
 
     prompt = f"""
 Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON
@@ -666,7 +644,7 @@ AUSGABEFORMAT (exakt so!)
 ------------------------------------------------
 AKTUELLES JSON
 ------------------------------------------------
-{json.dumps(current_json, indent=2)}
+{json.dumps(session, indent=2)}
 ------------------------------------------------
 AUFGABE
 ------------------------------------------------
@@ -685,38 +663,28 @@ Lösche das beschriebene Element jetzt.
             max_tokens=500,
             temperature=0.0,
         )
-        raw_output = response.choices[0].message.content
-        new_json = json.loads(raw_output)
-
+        data = json.loads(resp.choices[0].message.content)
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Fehler ChatGPT: {str(e)}")
+        raise HTTPException(500, f"Fehler ChatGPT: {e}")
 
-    session_data[session_id] = {
-      "elements": new_json["elements"]
-    }
+    if not isinstance(data.get("elements"), list):
+        raise HTTPException(500, "Antwort enthielt kein gültiges 'elements'-Array")
+
+    # 4) Session aktualisieren -----------------------------------------
+    session["elements"] = data["elements"]
+    session_manager.update_session(session_id, session)
 
     return {
-      "status": "ok",
-      "updated_json": session_data[session_id],
-      "answer": new_json.get("answer", "")
+        "status": "ok",
+        "updated_json": session,
+        "answer": data.get("answer", "")
     }
-
-# -----------------------------------------------------
-# Match LV with Aufmass
-# -----------------------------------------------------
-@app.post("/match-lv/")
-async def match_lv(data: MatchRequest):
-    sess = session_data.get(data.session_id) or {}
-    aufmass_txt = next((e["text"] for e in sess.get("elements",[])
-                        if e.get("type")=="aufmass"), "")
-    lines = parse_aufmass(aufmass_txt)
-    mapping = await best_matches_batch(lines)
-    return {"mapping": mapping}
 
 # -----------------------------------------------------
 # Generate Invoice
 # -----------------------------------------------------
-@app.post("/invoice/")
+@app.post("/invoice")
 def build_invoice(req: InvoiceRequest):
     file = f"temp/invoice_{uuid.uuid4()}.pdf"
     make_invoice(file, company="Muster GmbH", mapping=req.mapping)

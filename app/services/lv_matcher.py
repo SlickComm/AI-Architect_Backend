@@ -1,11 +1,9 @@
 import os
-from dotenv import load_dotenv
 import json, asyncio, re
 
 from pathlib import Path
 from typing import List, Dict, Any
-
-import asyncio
+from dotenv import load_dotenv
 
 from openai import AsyncOpenAI
 
@@ -80,7 +78,7 @@ async def _match_line(line: str) -> Dict[str, Any]:
     )
     
     # ---- DEBUG -------------------------------------------------
-    print("\n▶︎ Aufmaß:", line)
+    print("Aufmaßzeile:", line)
     
     result = json.loads(resp.choices[0].message.content)
     print("▶︎ GPT-Ergebnis:", json.dumps(result, indent=2, ensure_ascii=False))
