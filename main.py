@@ -7,6 +7,7 @@ import ezdxf
 import os
 import uuid
 import json
+import re
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -222,6 +223,37 @@ def _apply_update(elem: dict, updates: dict) -> None:
     for k, v in updates.items():
         if k in _ALLOWED_EDIT_FIELDS:
             elem[k] = v
+
+def _sort_aufmass_lines(lines: list[str]) -> list[str]:
+    """Sortiert Aufmaßzeilen nach:
+       1) Baugraben, 2) Rohr(e), 3) Durchstich, 4) Oberfläche(n)
+       und innerhalb nach natürlicher Nummerierung.
+    """
+    def key(line: str, pos: int):
+        s = line.strip()
+
+        m = re.match(r"^Baugraben\s+(\d+)\b", s, re.I)
+        if m:  # Gruppe 0
+            return (0, int(m.group(1)), 0, pos)
+
+        # "Rohr 2:" oder "Rohr 1–3:" → nach erster Zahl sortieren
+        m = re.match(r"^Rohr\s+(\d+)(?:\s*[–-]\s*(\d+))?", s, re.I)
+        if m:  # Gruppe 1
+            return (1, int(m.group(1)), 0, pos)
+
+        m = re.match(r"^Durchstich\s+(\d+)\b", s, re.I)
+        if m:  # Gruppe 2
+            return (2, int(m.group(1)), 0, pos)
+
+        # "Oberfläche 2:" oder "Oberfläche 2.3:"
+        m = re.match(r"^Oberfl[aä]che\s+(\d+)(?:\.(\d+))?", s, re.I)
+        if m:  # Gruppe 3
+            return (3, int(m.group(1)), int(m.group(2) or 0), pos)
+
+        # Unbekanntes → ganz ans Ende, stabil
+        return (9, 10**9, 10**9, pos)
+
+    return [l for _, _, _, _, l in sorted(((*key(l, i), l) for i, l in enumerate(lines)))]
 
 # -----------------------------------------------------
 # 1) START SESSION
@@ -758,46 +790,43 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             (xR0 + L2,                  CLR_BOT + T2),
             (xR0,                       CLR_BOT + T2),
         ]
-        HOLE_GROW = 0.002
+        
+        # --- Loch für den Durchstich bewusst etwas GRÖSSER als der reale Durchstich ---
+        HOLE_GROW = 0.005  # 2 mm Sicherheitsabstand
+
         px0 = x_start + CLR_LR + L1
         px1 = px0 + p_w
         py0 = CLR_BOT
         py1 = CLR_BOT + max(T1, T2)
+
         pass_hole = [
             (px0 - HOLE_GROW, py0 - HOLE_GROW),
             (px1 + HOLE_GROW, py0 - HOLE_GROW),
             (px1 + HOLE_GROW, py1 + HOLE_GROW),
             (px0 - HOLE_GROW, py1 + HOLE_GROW),
         ]
+
         hatch = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
         hatch.dxf.associative = 0
-        hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE)
+        hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
+                            angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
+
+        # Insel-Detektion so robust wie möglich:
+        try:
+            hatch.dxf.hatch_style = const.HATCH_STYLE_OUTERMOST  # 0=Normal, 1=Outer, 2=Ignore
+            # Einige CADs nutzen zusätzlich dieses Feld:
+            hatch.dxf.islands_detection_style = 1  # 0=OddEven, 1=Outer, 2=Ignore
+        except Exception:
+            pass
+
         hatch.paths.add_polyline_path(outer, is_closed=True, flags=const.BOUNDARY_PATH_OUTERMOST)
         for hole in (innerL, innerR, pass_hole):
             hatch.paths.add_polyline_path(hole, is_closed=True)
 
+
         # Innenkonturen beider Gräben (mit Lücken am Pass)
         origin_front1 = (x_start, 0.0)
         origin_front2 = (x_start + L1 + p_w + CLR_LR, 0.0)
-
-        # vertical_clip_left_right = max(0.0, T1 - PASS_BOTTOM_GAP)
-        # draw_trench_front_lr(
-        #     msp, origin_front1, L1, T1,
-        #     clear_left=CLR_LR, clear_right=0.0, clear_bottom=CLR_BOT,
-        #     vertical_clip_right=vertical_clip_left_right,
-        #     top_len_from_left=L1,
-        #     draw_outer=False,
-        # )
-        # gap_len_r = min(L2, max(0.0, p_w))
-        # draw_trench_front_lr(
-        #     msp, origin_front2, L2, T2,
-        #     clear_left=0.0, clear_right=CLR_LR, clear_bottom=CLR_BOT,
-        #     top_clip_left=0.0,
-        #     gap_top_from_left=0.0 if gap_len_r > 0 else None,
-        #     gap_top_len=gap_len_r if gap_len_r > 0 else None,
-        #     draw_left_inner=False,
-        #     draw_outer=False,
-        # )
 
         # Gibt es neben dem aktuellen Merge noch weitere Durchstiche?
         has_pass_left  = (i > 0) and (_pass_for_between(passes, i)   is not None)    # zwischen BG(i) und BG(i-1)
@@ -977,8 +1006,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
 
     # ---------- Aufmaß-Block als MText ----------
+    sorted_aufmass = _sort_aufmass_lines(aufmass)
     msp.add_mtext(
-        "Aufmaß:\n" + "\n".join(aufmass),
+        "Aufmaß:\n" + "\n".join(sorted_aufmass),
         dxfattribs={
             "layer": "Baugraben",
             "style": "ISOCPEUR",
@@ -991,7 +1021,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     os.makedirs(out_dir, exist_ok=True)
     file_path = os.path.join(out_dir, f"generated_{uuid.uuid4()}.dxf")
     doc.saveas(file_path)
-    return file_path, "\n".join(aufmass)
+    return file_path, "\n".join(sorted_aufmass)
 
 # -----------------------------------------------------
 # Edit Element

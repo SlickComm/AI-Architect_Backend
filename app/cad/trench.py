@@ -71,7 +71,8 @@ def draw_trench_front(
 
     # Schraffur
     hatch = msp.add_hatch(color=4, dxfattribs={"layer": LAYER_HATCH})
-    hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE)
+    hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
+                        angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
     hatch.paths.add_polyline_path(outer, is_closed=True)
     hatch.paths.add_polyline_path(inner, is_closed=True)
 

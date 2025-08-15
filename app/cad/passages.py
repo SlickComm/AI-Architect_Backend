@@ -47,7 +47,10 @@ def draw_pass_front(
 
     hatch = msp.add_hatch(dxfattribs={"layer": LAYER_PASS})
     hatch.dxf.associative = 0
-    hatch.set_pattern_fill(pattern, scale=hatch_scale)
+
+    # nur für EARTH drehen
+    angle = 45.0 if (pattern or "").upper() == "EARTH" else 0.0
+    hatch.set_pattern_fill(pattern, scale=hatch_scale, angle=angle)
 
     hatch.paths.add_polyline_path(
         [(hx0, hy0), (hx1, hy0), (hx1, hy1), (hx0, hy1)],
