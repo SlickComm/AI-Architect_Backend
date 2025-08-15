@@ -96,10 +96,16 @@ def draw_trench_top(msp, top_left, length, width):
 
 def draw_trench_front_lr(
     msp, origin: Tuple[float, float], length: float, depth: float, *,
-    clear_left: float = 0.2, clear_right: float = 0.2, clear_bottom: float = 0.2,
-    bottom_clip_left: float = 0.0, top_clip_left: float = 0.0,
-    top_len_from_left: float | None = None, vertical_clip_right: float = 0.0,
-    draw_left_inner: bool = True, draw_outer: bool = True,
+    clear_left: float = 0.2, 
+    clear_right: float = 0.2, 
+    clear_bottom: float = 0.2,
+    bottom_clip_left: float = 0.0, 
+    top_clip_left: float = 0.0,
+    top_len_from_left: float | None = None, 
+    vertical_clip_right: float = 0.0,
+    draw_left_inner: bool = True,
+    draw_right_inner: bool = True, 
+    draw_outer: bool = True,
     gap_top_from_left: float | None = None,    # NEW: Lücke in der Decke
     gap_top_len:       float | None = None,    # NEW: Breite der Lücke
     gap_bot_from_left: float | None = None,    # optional: Lücke im Boden
@@ -135,14 +141,15 @@ def draw_trench_front_lr(
             g1 = x0 + min(length, gap_bot_from_left + gap_bot_len)
             _hline(x_lft, min(x_rgt, g0), y_bot)
             _hline(max(x_lft, g1), x_rgt, y_bot)
-
-        # rechte Innenwand
-        y_stop = y_bot if vertical_clip_right <= 0 else max(y_bot, y_top - vertical_clip_right)
-        msp.add_lwpolyline([(x_rgt, y_stop), (x_rgt, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
-
+            
         # linke Innenwand
         if draw_left_inner:
             msp.add_lwpolyline([(x0, y_bot), (x0, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
+
+        # rechte Innenwand – nur falls gewünscht
+        if draw_right_inner:
+            y_stop = y_bot if vertical_clip_right <= 0 else max(y_bot, y_top - vertical_clip_right)
+            msp.add_lwpolyline([(x_rgt, y_stop), (x_rgt, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
         # ── Decke (mit optionaler Lücke)
         x_start = x0 + top_clip_left
