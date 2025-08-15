@@ -13,9 +13,9 @@ from openai import OpenAI
 from pydantic import BaseModel
 from typing import List
 
-from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top
+from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top, draw_trench_front_lr, LAYER_TRENCH_OUT, LAYER_TRENCH_IN, LAYER_HATCH, HATCH_PATTERN, HATCH_SCALE, DIM_OFFSET_FRONT, DIM_TXT_H, DIM_EXE_OFF
 from app.cad.pipe import draw_pipe_front, register_layers as reg_pipe
-from app.cad.surface import draw_surface_top, register_layers as reg_surface
+from app.cad.surface import draw_surface_top_segments, draw_surface_top, register_layers as reg_surface
 from app.cad.passages import register_layers as reg_pass, draw_pass_front
 
 from app.services.lv_matcher import best_matches_batch, parse_aufmass
@@ -49,6 +49,164 @@ class InvoiceRequest(BaseModel):
     mapping:   List[dict]
 
 app.include_router(billing_routes.router, tags=["Billing"])
+
+def _surfaces_for_trench(all_surfaces, trench_idx_1based: int):
+    # keep original order; if "seq" is set, sort by it
+    lst = [s for s in all_surfaces if int(s.get("for_trench", 0)) == trench_idx_1based]
+    if any("seq" in s for s in lst):
+        lst = sorted(lst, key=lambda s: int(s.get("seq", 1)))
+    return lst
+
+def _normalize_and_reindex(session: dict) -> None:
+    elems = session.setdefault("elements", [])
+    def tnorm(e): return e.get("type", "").lower()
+
+    # ... Baugräben reindizieren wie gehabt ...
+    trenches = [e for e in elems if "baugraben" in tnorm(e)]
+    old_idx = [int(e.get("trench_index", i+1)) for i, e in enumerate(trenches)]
+    idx_map = {}
+    for new_i, (bg, old_i) in enumerate(zip(trenches, old_idx), start=1):
+        idx_map[old_i] = new_i
+        bg["trench_index"] = new_i
+    N = len(trenches)
+
+    keep = []
+    pass_buffer = []  # Durchstiche ohne 'between' sammeln
+
+    for e in elems:
+        tt = tnorm(e)
+
+        if "baugraben" in tt:
+            keep.append(e)
+            continue
+
+        # NEU: Fremd-feld entfernen
+        e.pop("trench_index", None)
+
+        if "rohr" in tt or "oberflächenbefest" in tt or "oberflaechenbefest" in tt:
+            ref = int(e.get("for_trench", 0))
+            if ref in idx_map:
+                e["for_trench"] = idx_map[ref]
+                keep.append(e)
+            elif ref == 0 and N > 0:
+                e["for_trench"] = N
+                keep.append(e)
+            # sonst verwerfen
+        elif "durchstich" in tt:
+            b = e.get("between")
+            if b is not None:
+                b = int(b or 0)
+                if 1 <= b < N:
+                    e["between"] = b
+                    keep.append(e)
+                # sonst verwerfen
+            else:
+                # später nummerieren
+                pass_buffer.append(e)
+        else:
+            keep.append(e)
+
+    # NEU: fehlende 'between' nach Reihenfolge 1..N-1 setzen
+    for k, e in enumerate(pass_buffer, start=1):
+        if k <= max(0, N-1):
+            e["between"] = k
+            keep.append(e)
+        # sonst verwerfen (mehr Durchstiche als Nahtstellen)
+
+    # Oberflächen-seq wie gehabt ...
+    surfaces = [e for e in keep if ("oberflächenbefest" in tnorm(e) or "oberflaechenbefest" in tnorm(e))]
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for s in surfaces:
+        buckets[int(s.get("for_trench", 0))].append(s)
+    for lst in buckets.values():
+        lst.sort(key=lambda s: int(s.get("seq", 10**9)))
+        for k, s in enumerate(lst, start=1):
+            s["seq"] = k
+
+    session["elements"] = keep
+
+def _pipes_for_trench(all_pipes, idx: int):
+    return [p for p in all_pipes if int(p.get("for_trench", 0)) == idx]
+
+def _first_pipe_for_trench(all_pipes, idx: int):
+    lst = _pipes_for_trench(all_pipes, idx)
+    return lst[0] if lst else None
+
+def _pass_for_between(all_passes, idx: int) -> dict | None:
+    # bevorzugt neues Feld 'between', sonst Legacy-Fallback per Listenposition
+    by_between = [p for p in all_passes if p.get("between") is not None]
+    if by_between:
+        for p in by_between:
+            if int(p.get("between", 0)) == idx:
+                return p
+        return None
+    # Legacy: gleicher Listenindex wie linker Graben
+    return all_passes[idx-1] if 0 <= idx-1 < len(all_passes) else None
+
+def _tnorm(e: dict) -> str:
+    return e.get("type", "").lower()
+
+def _find_target_index_by_selection(elems: list[dict], sel: dict) -> int | None:
+    """sel = {type, trench_index? | for_trench? | between?, seq?}"""
+    t = (sel.get("type") or "").lower()
+
+    def is_surface(x): 
+        tx = _tnorm(x)
+        return ("oberflächenbefest" in tx) or ("oberflaechenbefest" in tx)
+
+    if "baugraben" in t:
+        ti = int(sel.get("trench_index", 0))
+        for i, e in enumerate(elems):
+            if "baugraben" in _tnorm(e) and int(e.get("trench_index", 0)) == ti:
+                return i
+        return None
+
+    if "rohr" in t:
+        ft = int(sel.get("for_trench", 0))
+        cand = [i for i, e in enumerate(elems) if ("rohr" in _tnorm(e)) and int(e.get("for_trench", 0)) == ft]
+        return cand[0] if cand else None
+
+    if is_surface({"type": sel.get("type", "")}):
+        ft = int(sel.get("for_trench", 0))
+        seq = sel.get("seq", None)
+        cand = [(i, e) for i, e in enumerate(elems) if is_surface(e) and int(e.get("for_trench", 0)) == ft]
+        if not cand:
+            return None
+        if seq is not None:
+            for i, e in cand:
+                if int(e.get("seq", 0) or 0) == int(seq):
+                    return i
+            return None
+        # kein seq angegeben → erste Oberfläche dieses Grabens (nach seq geordnet, sonst Ordn.)
+        cand.sort(key=lambda p: int(p[1].get("seq", 10**9)))
+        return cand[0][0]
+
+    if "durchstich" in t:
+        # Bevorzugt 'between' (zwischen N und N+1)
+        if "between" in sel and sel["between"] is not None:
+            b = int(sel["between"])
+            cand = [i for i, e in enumerate(elems) if ("durchstich" in _tnorm(e)) and int(e.get("between", -1)) == b]
+            if cand:
+                return cand[0]
+        # Legacy: n-ter Durchstich in Dokumentreihenfolge (falls explizit ordinal adressiert)
+        if "ordinal" in sel and sel["ordinal"] is not None:
+            k = int(sel["ordinal"])
+            idxs = [i for i, e in enumerate(elems) if "durchstich" in _tnorm(e)]
+            if 1 <= k <= len(idxs):
+                return idxs[k-1]
+        # Fallback: erster vorhandener Durchstich
+        idxs = [i for i, e in enumerate(elems) if "durchstich" in _tnorm(e)]
+        return idxs[0] if idxs else None
+
+    return None
+
+_ALLOWED_EDIT_FIELDS = {"length","width","depth","diameter","material","offset","pattern"}
+
+def _apply_update(elem: dict, updates: dict) -> None:
+    for k, v in updates.items():
+        if k in _ALLOWED_EDIT_FIELDS:
+            elem[k] = v
 
 # -----------------------------------------------------
 # 1) START SESSION
@@ -90,15 +248,14 @@ GRUNDREGELN
   es ausdrücklich (Stichwortliste: „Oberflächenbefestigung“, „Gehwegplatten“,
   „Mosaikpflaster“, „Verbundpflaster“).
 
-────────────────────────────────────────────
-REGELN ZU „trench_index“
-────────────────────────────────────────────
-• Nur Baugräben besitzen das Feld "trench_index" (1-basiert, fortlaufend).
-• Rohr, Oberflächenbefestigung und Durchstich dürfen dieses Feld NIE haben.
-
-Beispiel (korrekt)
-  {{ "type":"Baugraben", "length":5, "trench_index":1 }}
-  {{ "type":"Rohr",      "diameter":0.15 }}
+REFERENZIERUNG (sehr wichtig)
+• "trench_index" NUR bei type == "Baugraben".
+• Rohr und Oberflächenbefestigung: IMMER "for_trench": <1-basiger Ziel-Baugraben>.
+• Durchstich: IMMER "between": N  (zwischen Baugraben N und N+1). KEIN "for_trench".
+• Formulierungen wie „im zweiten Baugraben“, „zu Baugraben 2“, „in BG 3“
+  bedeuten: setze "for_trench" = N (nur für Rohr/Oberfläche).
+• Erfinde KEINE neuen Baugräben. Wenn die Anweisung auf einen nicht existierenden
+  Baugraben verweist, erzeuge KEIN Element und schreibe das im "answer".
 
 ────────────────────────────────────────────
 SETZE trench_index NUR BEI BAUGRABEN
@@ -110,6 +267,35 @@ SETZE trench_index NUR BEI BAUGRABEN
     {{ "type":"Rohr", "diameter":0.15 }}          # kein Index
 • Beispiel (FALSCH – wird verworfen)
     {{ "type":"Rohr", "diameter":0.15, "trench_index":2 }}
+
+────────────────────────────────────────────
+MEHRERE OBERFLÄCHEN PRO BAUGRABEN (STUFUNG)
+────────────────────────────────────────────
+• Oberflächen werden als mehrere Objekte mit type="Oberflächenbefestigung"
+  und identischem "for_trench" erzeugt.
+• Für jede Oberfläche setze:
+    – offset  (Randzone in Metern, Pflicht)
+    – length  (Segmentlänge in Metern; die letzte darf fehlen → Restlänge)
+    – material (optional)
+    – seq     (1-basiert, Reihenfolge der Segmente von links nach rechts)
+• Beispiel:
+    "Baugraben 1 hat zwei Oberflächen:
+     Oberfläche 1: Randzone 0,2, Länge 5 m, Material: Mosaiksteine.
+     Oberfläche 2: Randzone 0,5, (Rest), Material: Gehwegplatten."
+  ⇒
+  [
+    {{"type":"Oberflächenbefestigung","for_trench":1,"seq":1,"offset":0.2,"length":5.0,"material":"Mosaiksteine"}},
+    {{"type":"Oberflächenbefestigung","for_trench":1,"seq":2,"offset":0.5,           "material":"Gehwegplatten"}}
+  ]
+
+────────────────────────────────────────────
+DURCHSTICH-REGEL
+────────────────────────────────────────────
+• Für "Durchstich" ist ausschließlich die **Länge** Pflicht.
+• Schreibe die Länge in das Feld **"length"**.
+• Das Feld **"width"** darf NICHT gesetzt werden.
+• Ein ggf. genannter "Versatz/offset" wird ignoriert.
+• Der Durchstich liegt immer zwischen dem benachbarten Baugraben N und N+1.
 
 ────────────────────────────────────────────
 MEHRERE OBJEKTE IN EINEM SATZ
@@ -157,13 +343,15 @@ JSON-Schema
 ────────────────────────────────────────────
 Wir arbeiten mit diesem JSON-Schema, wobei bei
 * Oberflächenbefestigung  ⇒  material + offset Pflicht sind,
-* Durchstich              ⇒  width Pflicht ist; offset & pattern optional.
+* Durchstich ⇒ length ist Pflicht; width nicht verwenden.
 
 {{
   "elements": [
     {{
-      "type": "string",   # Baugraben | Rohr | Oberflächenbefestigung | Durchstich
-      "trench_index": 0,           // ➜  **nur erlaubter Key bei type == "Baugraben"**
+      "type": "string",  # Baugraben | Rohr | Oberflächenbefestigung | Durchstich
+      "trench_index": 0, # NUR bei Baugraben
+      "for_trench": 0,   # NUR bei Nicht-Baugraben (1-basiger Verweis)
+      "seq": 0,          # optional: laufende Nummer innerhalb desselben Typs
       "length": 0.0,
       "width":  0.0,
       "depth":  0.0,
@@ -194,6 +382,8 @@ ACHTUNG:
   – Liste von Maßen ⇒ so viele Objekte wie Maß­paare  
 • Verwende sequentialle trench_index-Werte,
   beginnend bei (höchster vorhandener Index + 1).
+• Erzeuge KEINE Baugräben implizit. Neues "trench_index" nur setzen, wenn der
+  Nutzer ausdrücklich einen Baugraben anlegt.
 
 ────────────────────────────────────────────
 ANTWORTFORMAT  (genau so!)
@@ -222,6 +412,7 @@ ANTWORTFORMAT  (genau so!)
 
     # ⑤ Session aktualisieren
     current_json["elements"].extend(added)
+    _normalize_and_reindex(current_json)
     session_manager.update_session(session_id, current_json)
 
     # Dann an den Client beides zurücksenden
@@ -294,6 +485,10 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     CLR_BOT   = 0.20    # freier Rand unten
     GAP_BG    = 1.50    # Abstand zwischen zwei Baugräben
     TOP_SHIFT = 1.50    # Abstand Draufsicht → Vorderansicht
+    PASS_BOTTOM_GAP = 0.5
+
+    MAX_DEPTH = max(float(t["depth"]) for t in trenches)  # tiefster BG
+    Y_TOP     = CLR_BOT + TOP_SHIFT + MAX_DEPTH
 
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
@@ -354,39 +549,68 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         L1, B1, T1 = map(float, (bg1["length"], bg1["width"], bg1["depth"]))
 
         # ❶ Prüfen, ob es *direkt nach* diesem BG einen Durchstich gibt
-        has_pass   = i < len(passes)          # gleicher Index
-        merge_next = has_pass and (i+1 < len(trenches))
+        # has_pass   = i < len(passes)          # gleicher Index
+        pas = _pass_for_between(passes, i+1)
+        # merge_next = has_pass and (i+1 < len(trenches))
+        merge_next = (pas is not None) and (i+1 < len(trenches))
 
         # --------------------------------------------------
         # A) FALL - Kein Durchstich  →  wie bisher
         # --------------------------------------------------
         if not merge_next:
             # Vorder- und Draufsicht BG wie früher
-            draw_trench_front(msp, (cursor_x, 0), L1, T1,
-                            clearance_left=CLR_LR, clearance_bottom=CLR_BOT)
-            draw_trench_top(msp, (cursor_x+CLR_LR, T1+CLR_BOT+TOP_SHIFT),
-                            length=L1, width=B1)
+            draw_trench_front(msp, (cursor_x, 0), L1, T1, clearance_left=CLR_LR, clearance_bottom=CLR_BOT)
+            draw_trench_top(msp, (cursor_x+CLR_LR, Y_TOP), length=L1, width=B1)
 
-            # optional Rohr
-            if i < len(pipes):
-                pipe = pipes[i]
-                d = float(pipe.get("diameter", 0))
-                if d:
-                    draw_pipe_front(msp, origin_front=(cursor_x+CLR_LR, CLR_BOT),
-                                    trench_inner_length=L1, diameter=d)
+            # optional Rohr (per for_trench – unabhängig von pipes-Länge)
+            pipe = _first_pipe_for_trench(pipes, i+1)
+            if pipe:
+                d = float(pipe.get("diameter", 0) or 0)
+                if d > 0:
+                    draw_pipe_front(
+                        msp,
+                        origin_front=(cursor_x+CLR_LR, CLR_BOT),
+                        trench_inner_length=L1,
+                        diameter=d
+                    )
                     pipe_len = pipe.get("length", max(0, L1 - 1))
                     aufmass.append(f"Rohr {i+1}: l={pipe_len} m  Ø={d} m")
 
-            # optional Oberfläche
-            if i < len(surfaces):
-                surf = surfaces[i]
-                off  = float(surf.get("offset", 0))
-                if off:
-                    draw_surface_top(msp,
-                        trench_top_left=(cursor_x+CLR_LR, T1+CLR_BOT+TOP_SHIFT),
-                        trench_length=L1, trench_width=B1,
-                        offset=off, material_text=f"Oberfläche: {surf.get('material','')}")
-                    aufmass.append(f"Oberfläche {i+1}: Randzone={off} m  Material={surf.get('material','')}")
+            # Oberflächenbefestigung(en)
+            seg_list = _surfaces_for_trench(surfaces, i+1)
+            if seg_list:
+                # if any segment has a "length" we use segmented drawing,
+                # otherwise fall back to the legacy single-offset behavior
+                if any(float(s.get("length", 0) or 0) > 0 for s in seg_list):
+                    draw_surface_top_segments(
+                        msp,
+                        trench_top_left=(cursor_x+CLR_LR, Y_TOP),
+                        trench_length=L1,
+                        trench_width=B1,
+                        segments=[{"length": float(s.get("length", 0) or 0),
+                                "offset": float(s.get("offset", 0) or 0),
+                                "material": s.get("material", "")}
+                                for s in seg_list],
+                        add_dims=True,
+                    )
+                    # Aufmaß
+                    for k, s in enumerate(seg_list, start=1):
+                        aufmass.append(
+                            f"Oberfläche {i+1}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
+                        )
+                else:
+                    off = float(seg_list[0].get("offset", 0) or 0)
+                    if off:
+                        draw_surface_top(
+                            msp,
+                            trench_top_left=(cursor_x+CLR_LR, Y_TOP),
+                            trench_length=L1, trench_width=B1,
+                            offset=off,
+                            material_text=f"Oberfläche: {seg_list[0].get('material','')}",
+                        )
+                        aufmass.append(
+                            f"Oberfläche {i+1}: Randzone={off} m  Material={seg_list[0].get('material','')}"
+                        )
 
             aufmass.append(f"Baugraben {i+1}: l={L1} m  b={B1} m  t={T1} m")
             cursor_x += L1 + 2*CLR_LR + GAP_BG
@@ -394,118 +618,299 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             continue
 
         # --------------------------------------------------
-        # B) FALL - Durchstich  →  BG1 + BG2 fusionieren
+        # B) FALL - Durchstich  →  BG1 | PASS | BG2 (ohne Kürzung)
         # --------------------------------------------------
         bg2 = trenches[i+1]
         L2, B2, T2 = map(float, (bg2["length"], bg2["width"], bg2["depth"]))
 
-        # Äußere Geometrie: Länge = L1+L2 (+ 2×CLR_LR), Tiefe = max(T1,T2)
-        L_combo = L1 + L2
-        T_combo = max(T1, T2)
+        # Passage-Daten
+        # pas   = passes[i]  # gleicher Index
+        pas = _pass_for_between(passes, i+1)
+        
+        # Nur length akzeptieren
+        if "length" not in pas:
+            raise HTTPException(400, "Durchstich ohne Länge (erwarte Feld 'length').")
+        p_w = float(pas["length"])   # variable darf p_w heißen, ist die Passage-Länge
+        
+        # NEU: Versatz wird ignoriert – Passage startet genau an der Naht
+        p_off = L1  # Start an rechter Innenkante von BG1 (gemessen von linker Innenkante des Kombis)
+
+        # Kombinierte Außenlänge: BG1 + PASS + BG2
+        L_combo = L1 + p_w + L2
         B_combo = max(B1, B2)
 
-        # Vorder- + Draufsicht des *kombinierten* Baugrabens zeichnen
-        origin_front = (cursor_x, 0.0)
-        draw_trench_front(
-            msp, origin_front, L_combo, T_combo,
-            clearance_left=CLR_LR, clearance_bottom=CLR_BOT
+        # Top-View Positionen: BG1 unverändert, BG2 nach der Passage
+        top_left_1 = (cursor_x + CLR_LR,                     Y_TOP)
+        top_left_2 = (cursor_x + CLR_LR + L1 + p_w,          Y_TOP)
+
+        # Für Aufmaß/Zeichnung unveränderte BG-Längen
+        left_len  = L1
+        right_len = L2
+
+        # Stufige Außenkontur (mit Clipping über der Passage)
+        xL = cursor_x
+        xR = cursor_x + 2*CLR_LR + L_combo
+        xSeamInner = cursor_x + CLR_LR + L1
+        xStep = xSeamInner + (CLR_LR if T1 >= T2 else 0.0)
+
+        yTopL = CLR_BOT + T1
+        yTopR = CLR_BOT + T2
+
+        # Pass-Box für Clipping / Hatch-Loch
+        pass_x0 = cursor_x + CLR_LR + p_off
+        pass_x1 = pass_x0 + p_w
+
+        pass_y0_clip  = CLR_BOT + PASS_BOTTOM_GAP      # nur fürs Linien-Clipping!
+        pass_y1       = CLR_BOT + max(T1, T2)
+        pass_y0_void  = CLR_BOT   
+
+        x_inner_left  = cursor_x + CLR_LR
+        x_inner_right = x_inner_left + L_combo
+        y_inner_bot   = CLR_BOT
+
+        DIM_OVERRIDE = {
+            "dimtxt": DIM_TXT_H,
+            "dimclrd": 3,
+            "dimexe": DIM_EXE_OFF,
+            "dimexo": DIM_EXE_OFF,
+            "dimtad": 0,
+        }
+
+        # Vertikale Tiefenmaße links/rechts (außen)
+        msp.add_linear_dim(
+            base=(x_inner_left - DIM_OFFSET_FRONT, y_inner_bot),
+            p1=(x_inner_left, y_inner_bot),
+            p2=(x_inner_left, y_inner_bot + T1),
+            angle=90,
+            override=DIM_OVERRIDE,
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
+        msp.add_linear_dim(
+            base=(x_inner_right + DIM_OFFSET_FRONT, y_inner_bot),
+            p1=(x_inner_right, y_inner_bot),
+            p2=(x_inner_right, y_inner_bot + T2),
+            angle=90,
+            override=DIM_OVERRIDE,
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
+
+        def add_outer_line_clipped(p1, p2):
+            (x1, y1), (x2, y2) = p1, p2
+            if abs(y1 - y2) < 1e-9:
+                xa, xb = (x1, x2) if x1 <= x2 else (x2, x1)
+                if pass_x0 > xa:
+                    msp.add_lwpolyline([(xa, y1), (min(pass_x0, xb), y1)],
+                                       dxfattribs={"layer": LAYER_TRENCH_OUT})
+                if xb > pass_x1:
+                    msp.add_lwpolyline([(max(pass_x1, xa), y1), (xb, y1)],
+                                       dxfattribs={"layer": LAYER_TRENCH_OUT})
+                return
+            if abs(x1 - x2) < 1e-9:
+                ya, yb = (y1, y2) if y1 <= y2 else (y2, y1)
+                if pass_y0_clip > ya:
+                    msp.add_lwpolyline([(x1, ya), (x1, min(pass_y0_clip, yb))], dxfattribs={"layer": LAYER_TRENCH_OUT})
+                if yb > pass_y1:
+                    msp.add_lwpolyline([(x1, max(pass_y1, ya)), (x1, yb)],
+                                       dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+                return
+            msp.add_lwpolyline([p1, p2], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Boden + Außenwände (unkritisch)
+        msp.add_lwpolyline([(xL, 0.0), (xR, 0.0)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        msp.add_lwpolyline([(xL, 0.0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        msp.add_lwpolyline([(xR, 0.0), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Obere Deckensegmente + Stufe, über Passage geclippt
+        add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
+        add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
+        add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
+
+        outer_pts = [
+            (xL, 0.0),
+            (xR, 0.0),
+            (xR, yTopR),
+            (xStep, yTopR),
+            (xStep, yTopL),
+            (xL, yTopL),
+        ]
+
+        outer = outer_pts  # [(xL,0),(xR,0),(xR,yTopR),(xStep,yTopR),(xStep,yTopL),(xL,yTopL)]
+
+        # Innere Rechtecke (Löcher) EXAKT wie bei draw_trench_front – kein EPS!
+        innerL = [
+            (cursor_x + CLR_LR,         CLR_BOT),
+            (cursor_x + CLR_LR + L1,    CLR_BOT),
+            (cursor_x + CLR_LR + L1,    CLR_BOT + T1),
+            (cursor_x + CLR_LR,         CLR_BOT + T1),
+        ]
+        xR0 = cursor_x + CLR_LR + L1 + p_w
+        innerR = [
+            (xR0,                       CLR_BOT),
+            (xR0 + L2,                  CLR_BOT),
+            (xR0 + L2,                  CLR_BOT + T2),
+            (xR0,                       CLR_BOT + T2),
+        ]
+
+        # Loch für den Durchstich – etwas GROESSER als der Durchstich,
+        # und VON UNTEN (CLR_BOT) bis ganz oben, damit kein Hatch unter dem Rohr liegt.
+        HOLE_GROW = 0.002  # 2 mm Sicherheitsrand nach außen
+        px0 = cursor_x + CLR_LR + L1
+        px1 = px0 + p_w
+        py0 = CLR_BOT
+        py1 = CLR_BOT + max(T1, T2)
+        pass_hole = [
+            (px0 - HOLE_GROW, py0 - HOLE_GROW),
+            (px1 + HOLE_GROW, py0 - HOLE_GROW),
+            (px1 + HOLE_GROW, py1 + HOLE_GROW),
+            (px0 - HOLE_GROW, py1 + HOLE_GROW),
+        ]
+
+        hatch = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
+        hatch.dxf.associative = 0
+        hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE)
+
+        # Outer explizit als äußerster Pfad
+        hatch.paths.add_polyline_path(outer, is_closed=True,
+                                    flags=const.BOUNDARY_PATH_OUTERMOST)
+        # Holes (Reihenfolge egal), OHNE EPS / Flags
+        for hole in (innerL, innerR, pass_hole):
+            hatch.paths.add_polyline_path(hole, is_closed=True)
+
+        # Innenkonturen links (voll), rechts (mit Lücke am Anfang = Passage)
+        origin_front1 = (cursor_x, 0.0)
+        origin_front2 = (cursor_x + L1 + p_w + CLR_LR, 0.0)
+
+        vertical_clip_left_right = max(0.0, T1 - PASS_BOTTOM_GAP)  # freier Einstieg
+        draw_trench_front_lr(
+            msp, origin_front1, L1, T1,
+            clear_left=CLR_LR, clear_right=0.0, clear_bottom=CLR_BOT,
+            vertical_clip_right=vertical_clip_left_right,
+            top_len_from_left=L1,   # Decke bis Naht voll
+            draw_outer=False,
         )
 
-        # Durchstich platzieren -----------------------------------------
-        pas    = passes[i]              # gleicher Index
-        p_w    = float(pas["width"])
-        p_off  = float(pas.get("offset", L1 - p_w/2))   # Default mittig „Naht“
-        
-        top_y = T_combo + CLR_BOT + TOP_SHIFT
-        top_left_1 = (cursor_x + CLR_LR, top_y)
-        top_left_2 = (cursor_x + CLR_LR + p_off + p_w, top_y)
+        # Rechte Seite: Lücke direkt am Anfang (Breite = p_w)
+        gap_len_r = min(L2, max(0.0, p_w))
+        draw_trench_front_lr(
+            msp, origin_front2, L2, T2,
+            clear_left=0.0, clear_right=CLR_LR, clear_bottom=CLR_BOT,
+            top_clip_left=0.0,
+            gap_top_from_left=0.0 if gap_len_r > 0 else None,
+            gap_top_len=gap_len_r if gap_len_r > 0 else None,
+            draw_left_inner=False,
+            draw_outer=False,
+        )
 
-        left_len  = max(0, p_off) 
-        right_len = max(0, L_combo - (p_off + p_w))
-
-        # ---------- (1) Oberflächen zeichnen ----------
-        if left_len > 0 and i < len(surfaces) and surfaces[i]:
-            surf = surfaces[i]
-            off  = float(surf.get("offset", 0))
-            if off:
-                draw_surface_top(
+        # Oberflächen links (BG1)
+        seg_list_L = _surfaces_for_trench(surfaces, i+1)
+        if seg_list_L:
+            if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_L):
+                draw_surface_top_segments(
                     msp,
                     trench_top_left=top_left_1,
-                    trench_length=left_len,
+                    trench_length=L1,
                     trench_width=B1,
-                    offset=off,
-                    material_text=f"Oberfläche: {surf.get('material','')}"
+                    segments=[{"length": float(s.get("length", 0) or 0),
+                            "offset": float(s.get("offset", 0) or 0),
+                            "material": s.get("material", "")}
+                            for s in seg_list_L],
+                    add_dims=True,
                 )
-                _add_surface_to_aufmass(i+1, surfaces[i])
+                for k, s in enumerate(seg_list_L, start=1):
+                    aufmass.append(
+                        f"Oberfläche {i+1}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
+                    )
+            else:
+                offL = float(seg_list_L[0].get("offset", 0) or 0)
+                if offL:
+                    draw_surface_top(msp, trench_top_left=top_left_1,
+                                    trench_length=L1, trench_width=B1, offset=offL,
+                                    material_text=f"Oberfläche: {seg_list_L[0].get('material','')}")
+                    aufmass.append(f"Oberfläche {i+1}: Randzone={offL} m  Material={seg_list_L[0].get('material','')}")
 
-        if right_len > 0 and i+1 < len(surfaces) and surfaces[i+1]:
-            surf = surfaces[i+1]
-            off  = float(surf.get("offset", 0))
-            if off:
-                draw_surface_top(
+        # Oberflächen rechts (BG2)
+        seg_list_R = _surfaces_for_trench(surfaces, i+2)
+        if seg_list_R:
+            if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_R):
+                draw_surface_top_segments(
                     msp,
                     trench_top_left=top_left_2,
-                    trench_length=right_len,
+                    trench_length=L2,
                     trench_width=B2,
-                    offset=off,
-                    material_text=f"Oberfläche: {surf.get('material','')}"
+                    segments=[{"length": float(s.get("length", 0) or 0),
+                            "offset": float(s.get("offset", 0) or 0),
+                            "material": s.get("material", "")}
+                            for s in seg_list_R],
+                    add_dims=True,
                 )
-                _add_surface_to_aufmass(i+2, surfaces[i+1]) 
+                for k, s in enumerate(seg_list_R, start=1):
+                    aufmass.append(
+                        f"Oberfläche {i+2}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
+                    )
+            else:
+                offR = float(seg_list_R[0].get("offset", 0) or 0)
+                if offR:
+                    draw_surface_top(msp, trench_top_left=top_left_2,
+                                    trench_length=L2, trench_width=B2, offset=offR,
+                                    material_text=f"Oberfläche: {seg_list_R[0].get('material','')}")
+                    aufmass.append(f"Oberfläche {i+2}: Randzone={offR} m  Material={seg_list_R[0].get('material','')}")
 
-        # ------- linke Draufsicht zeichnen (falls >0) -------------
-        if left_len:
-            draw_trench_top(
-                msp,
-                top_left=(cursor_x + CLR_LR, top_y),
-                length=left_len,
-                width=B1
-            )
+        # Draufsichten (volle BG-Längen)
+        draw_trench_top(msp, top_left_1, length=L1, width=B1)
+        draw_trench_top(msp, top_left_2, length=L2, width=B2)
 
-        # ------- rechte Draufsicht zeichnen (falls >0) ------------
-        if right_len:
-            draw_trench_top(
-                msp,
-                top_left=(cursor_x + CLR_LR + p_off + p_w, top_y),
-                length=right_len,
-                width=B2
-            )
-
-        # ---------- Rohrdaten (links + rechts) ----------
-        pipe_left  = pipes[i]   if i   < len(pipes) else None
-        pipe_right = pipes[i+1] if i+1 < len(pipes) else None
-
-        pipe_src = next((p for p in (pipe_left, pipe_right) if p and p.get("diameter")), None)
+        # Rohr – jetzt über komplette Kombi inkl. Passage führen
+        # pipe_left  = pipes[i]   if i   < len(pipes) else None
+        # pipe_right = pipes[i+1] if i+1 < len(pipes) else None
+        # pipe_src = next((p for p in (pipe_left, pipe_right) if p and p.get("diameter")), None)
+        
+        pipe_left  = _first_pipe_for_trench(pipes, i+1)
+        pipe_right = _first_pipe_for_trench(pipes, i+2)
+        pipe_src   = pipe_left or pipe_right
         if pipe_src:
-            d = float(pipe_src["diameter"])
-            # durchgehendes Rohr zeichnen
-            draw_pipe_front(
-                msp,
-                origin_front=(cursor_x + CLR_LR, CLR_BOT),
-                trench_inner_length=L_combo,
-                diameter=d,
-            )
-            aufmass.append(f"Rohr {i+1}:  l={L_combo} m  Ø={d} m")
+            d = float(pipe_src.get("diameter", 0) or 0)
+            if d > 0:
+                draw_pipe_front(
+                    msp,
+                    origin_front=(cursor_x + CLR_LR, CLR_BOT),
+                    trench_inner_length=L_combo,
+                    diameter=d,
+                )
+                aufmass.append(f"Rohr {i+1}:  l={max(0, L_combo - 1)} m  Ø={d} m")
 
+
+        # Durchstich (front)
         draw_pass_front(
             msp,
-            trench_origin=origin_front,
+            trench_origin=origin_front1,
             trench_len=L_combo,
-            trench_depth=T_combo,
+            trench_depth=max(T1, T2),
             width=p_w,
-            offset=p_off,
+            offset=p_off,  # Start an Naht
             clearance_left=CLR_LR,
             clearance_bottom=CLR_BOT,
-            pattern=pas.get("pattern", "ANSI31"),
+            pattern=pas.get("pattern", "EARTH"),
+            hatch_scale=HATCH_SCALE,
+            seed_point=(0.0, 0.0),  
         )
 
-        # Aufmaß ---------------------------------------------------------
-        aufmass.append(f"Durchstich {i+1}: b={p_w} m  Versatz={p_off} m")
-        aufmass.append(f"Baugraben {i+1}: l={left_len:.2f} m  b={B1} m  t={T1} m")
-        aufmass.append(f"Baugraben {i+2}: l={right_len:.2f} m  b={B2} m  t={T2} m")
+        # --- Naht am Boden unter der Passage schließen (unter der Schraffur sichtbar)
+        x_inner_left = cursor_x + CLR_LR
+        y_inner_bot  = CLR_BOT
+        x_bridge0    = x_inner_left + L1
+        x_bridge1    = x_bridge0 + p_w
+        if x_bridge1 - x_bridge0 > 1e-9 and PASS_BOTTOM_GAP > 0:
+            msp.add_lwpolyline([(x_bridge0, y_inner_bot), (x_bridge1, y_inner_bot)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
-        # Cursor auf den Bereich *nach* BG2 setzen
+        # Aufmaß (ohne Versatz-Ausgabe)
+        aufmass.append(f"Durchstich {i+1}: l={p_w} m")
+        aufmass.append(f"Baugraben {i+1}: l={L1} m  b={B1} m  t={T1} m")
+        aufmass.append(f"Baugraben {i+2}: l={L2} m  b={B2} m  t={T2} m")
+
+        # Cursor hinter den gesamten Abschnitt setzen
         cursor_x += L_combo + 2*CLR_LR + GAP_BG
-        i += 2        # zwei BGs auf einmal verarbeitet!
+        i += 2
 
     # ---------- Aufmaß-Block als MText ----------
     msp.add_mtext(
@@ -528,49 +933,54 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 # Edit Element
 # -----------------------------------------------------
 @app.post("/edit-element")
-def edit_element(session_id: str,instruction: str = Body(..., embed=True)):
+def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
 
-    # Hier das prompt an ChatGPT formulieren
     prompt = f"""
-Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON
-zurückliefern, kein Fließtext.  Format siehe unten.
+Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON liefern.
 
----------------------------------------------
-ZIEL-ELEMENT FINDEN
----------------------------------------------
-• Falls {instruction!r} eine Ordinalzahl enthält
-  („ersten Baugraben“, „3. Baugraben“, „dritten Rohr“ …),
-  gilt das als eindeutiger Index:
-      erster/1.  →  trench_index = 1
-      zweiter/2. →  2   …   sechster/6. → 6
-• Enthält der Satz KEINE Ordinalzahl, wähle das
-  **erste** Vorkommen des passenden Typs.
+AUFGABE
+• Interpretiere die Anweisung {instruction!r}.
+• Bestimme GENAU EIN Zielobjekt und die zu ändernden Felder.
 
----------------------------------------------
-ERLAUBTE FELDER FÜR EDIT
----------------------------------------------
+ADRESSIERUNGSREGELN (sehr wichtig)
+• Typen: "Baugraben" | "Rohr" | "Oberflächenbefestigung" | "Durchstich".
+• Baugraben N        → selection.trench_index = N (1-basiert).
+• Rohr im Baugraben N / Rohr zu Baugraben N
+                     → selection.for_trench = N.
+• Oberflächenbefestigung im/zu Baugraben N
+                     → selection.for_trench = N, optional selection.seq = M
+                       (bei "erste/zweite Oberfläche ...").
+• Durchstich zwischen Baugraben N und N+1
+                     → selection.between = N.
+  Falls "dritter Durchstich" o. ä. ohne Between:
+                     → selection.ordinal = 3 (1-basiert in Reihenfolge).
+• Synonyme erkennen: "BG", "Baugr.", "Graben", "im ersten", "zu Baugraben 2", etc.
+
+WAS NICHT TUN
+• KEINE neuen Elemente hinzufügen oder löschen.
+• KEIN 'trench_index' bei Nicht-Baugraben setzen.
+
+ERLAUBTE ÄNDERUNGEN
 length | width | depth | diameter | material | offset | pattern
 
-Lass alle nicht genannten Felder UNVERÄNDERT!
-Du darfst KEIN weiteres Element hinzufügen oder löschen.
-
----------------------------------------------
-OUTPUT-FORMAT  (genau so!)
----------------------------------------------
+AUSGABEFORMAT GENAU SO:
 {{
-  "elements": [...alle Objekte, in Originalreihenfolge...],
+  "selection": {{
+    "type": "Baugraben | Rohr | Oberflächenbefestigung | Durchstich",
+    "trench_index": 0,   # nur bei Baugraben
+    "for_trench": 0,     # nur bei Rohr/Oberflächenbefestigung
+    "seq": 0,            # optional für Oberflächenbefestigung
+    "between": 0,        # nur bei Durchstich
+    "ordinal": 0         # optional: 1..k für n-ten Durchstich in Reihenfolge
+  }},
+  "set": {{
+    # nur die Felder, die geändert werden sollen
+  }},
   "answer": "max. 2 Sätze auf Deutsch"
 }}
-
----------------------------------------------
-AKTUELLES JSON
----------------------------------------------
-{json.dumps(session, indent=2)}
----------------------------------------------
-JETZT AUFGABE
----------------------------------------------
-Ändere exakt *ein* Element gemäss:  {instruction!r}
 """
 
     try:
@@ -581,20 +991,27 @@ JETZT AUFGABE
                 {"role": "system", "content": "You are a JSON API."},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=500,
+            max_tokens=400,
             temperature=0.0,
         )
-        data = json.loads(resp.choices[0].message.content)
-
+        data = json.loads(response.choices[0].message.content)
     except Exception as e:
         raise HTTPException(500, f"Fehler ChatGPT: {e}")
 
-    # 4) Antwort prüfen -------------------------------------------------
-    if not isinstance(data.get("elements"), list):
-        raise HTTPException(500, "Antwort enthielt kein gültiges 'elements'-Array")
+    sel = data.get("selection") or {}
+    updates = data.get("set") or {}
+    if not isinstance(sel, dict) or not isinstance(updates, dict) or not sel.get("type"):
+        raise HTTPException(400, "Ungültige LLM-Antwort: selection/set fehlen oder sind leer.")
 
-    # 5) Session mutieren & speichern ----------------------------------
-    session["elements"] = data["elements"]
+    elems = session.setdefault("elements", [])
+    idx = _find_target_index_by_selection(elems, sel)
+    if idx is None:
+        raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
+
+    _apply_update(elems[idx], updates)
+
+    # Normalize + speichern
+    _normalize_and_reindex(session)
     session_manager.update_session(session_id, session)
 
     return {
@@ -626,6 +1043,9 @@ SCHRITT 1 – Element bestimmen
 • Andernfalls lösche das **erste** Objekt,
   dessen `type` zum genannten Begriff passt
   (Baugraben | Rohr | Oberflächenbefestigung | Durchstich).
+• Bei "Baugraben": trench_index = N.
+• Bei "Rohr" | "Oberflächenbefestigung" | "Durchstich":
+    wähle das Objekt mit for_trench = N (oder seq = N, falls so adressiert).
 
 ------------------------------------------------
 SCHRITT 2 – Löschen
@@ -651,6 +1071,8 @@ AUFGABE
 Lösche das beschriebene Element jetzt.
 """
 
+    old_elems = session.get("elements", [])
+    expected_n = len(old_elems) - 1
 
     try:
         response = client.chat.completions.create(
@@ -663,7 +1085,7 @@ Lösche das beschriebene Element jetzt.
             max_tokens=500,
             temperature=0.0,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = json.loads(response.choices[0].message.content)
         
     except Exception as e:
         raise HTTPException(500, f"Fehler ChatGPT: {e}")
@@ -671,8 +1093,17 @@ Lösche das beschriebene Element jetzt.
     if not isinstance(data.get("elements"), list):
         raise HTTPException(500, "Antwort enthielt kein gültiges 'elements'-Array")
 
+    new_elems = data.get("elements")
+    if not isinstance(new_elems, list) or len(new_elems) != expected_n:
+        raise HTTPException(
+            400,
+            f"Ungültige LLM-Antwort: erwartet {expected_n} Elemente, bekommen "
+            f"{'none' if not isinstance(new_elems, list) else len(new_elems)}."
+        )
+
     # 4) Session aktualisieren -----------------------------------------
     session["elements"] = data["elements"]
+    _normalize_and_reindex(session)
     session_manager.update_session(session_id, session)
 
     return {
