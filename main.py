@@ -722,24 +722,33 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         p_w = float(pas["length"])
         p_off = L1  # Start direkt an der Naht (Innenkante BG1)
 
+        # Gibt es neben dem aktuellen Merge noch weitere Durchstiche?
+        has_pass_left  = (i > 0) and (_pass_for_between(passes, i)   is not None)
+        has_pass_right = (i+2 < len(trenches)) and (_pass_for_between(passes, i+2) is not None)
+
+        left_clear  = 0.0 if has_pass_left  else CLR_LR   # links nur am Clusteranfang
+        right_clear = 0.0 if has_pass_right else CLR_LR   # rechts nur am Clusterende
+
         # Kombilängen & Positionen (alle relativ zu x_start)
         L_combo = L1 + p_w + L2
         xL = x_start
-        xR = x_start + 2*CLR_LR + L_combo
+        xR = x_start + left_clear + L_combo + right_clear
 
-        top_left_1 = (x_start + CLR_LR, Y_TOP)
-        top_left_2 = (x_start + CLR_LR + L1 + p_w, Y_TOP)
+        top_left_1 = (x_start + left_clear, Y_TOP)         
+        top_left_2 = (x_start + left_clear + L1 + p_w, Y_TOP)
 
         yTopL = CLR_BOT + T1
         yTopR = CLR_BOT + T2
 
-        pass_x0 = x_start + CLR_LR + p_off
+        pass_x0 = x_start + left_clear + p_off              # statt + CLR_LR
         pass_x1 = pass_x0 + p_w
+
         pass_y0_clip = CLR_BOT + PASS_BOTTOM_GAP
         pass_y1 = CLR_BOT + max(T1, T2)
 
-        x_inner_left  = x_start + CLR_LR
-        x_inner_right = x_inner_left + L_combo
+        EPS_JOIN = 1e-3  # 1 mm Überlappung
+        x_inner_left  = x_start + left_clear
+        x_inner_right = x_inner_left + L1 + p_w + L2
         y_inner_bot   = CLR_BOT
 
         DIM_OVERRIDE = {
@@ -769,85 +778,25 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 return
             msp.add_lwpolyline([p1, p2], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        xSeamInner = x_start + CLR_LR + L1
-        xStep = xSeamInner + (CLR_LR if T1 >= T2 else 0.0)
+        # Obere Deckensegmente (wie gehabt geclippt über der Passage)
+        xSeamInner = x_start + left_clear + L1
+        xStep = xSeamInner
+
         add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
         add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
         add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
 
-        # HATCH (Außenkontur + Löcher)
-        outer = [(xL, 0.0), (xR, 0.0), (xR, yTopR), (xStep, yTopR), (xStep, yTopL), (xL, yTopL)]
-        innerL = [
-            (x_start + CLR_LR,         CLR_BOT),
-            (x_start + CLR_LR + L1,    CLR_BOT),
-            (x_start + CLR_LR + L1,    CLR_BOT + T1),
-            (x_start + CLR_LR,         CLR_BOT + T1),
-        ]
-        xR0 = x_start + CLR_LR + L1 + p_w
-        innerR = [
-            (xR0,                       CLR_BOT),
-            (xR0 + L2,                  CLR_BOT),
-            (xR0 + L2,                  CLR_BOT + T2),
-            (xR0,                       CLR_BOT + T2),
-        ]
-        
-        # --- Loch für den Durchstich bewusst etwas GRÖSSER als der reale Durchstich ---
-        HOLE_GROW = 0.005  # 2 mm Sicherheitsabstand
-
-        px0 = x_start + CLR_LR + L1
-        px1 = px0 + p_w
-        py0 = CLR_BOT
-        py1 = CLR_BOT + max(T1, T2)
-
-        pass_hole = [
-            (px0 - HOLE_GROW, py0 - HOLE_GROW),
-            (px1 + HOLE_GROW, py0 - HOLE_GROW),
-            (px1 + HOLE_GROW, py1 + HOLE_GROW),
-            (px0 - HOLE_GROW, py1 + HOLE_GROW),
-        ]
-
-        hatch = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
-        hatch.dxf.associative = 0
-        hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
-                            angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
-
-        # Insel-Detektion so robust wie möglich:
-        try:
-            hatch.dxf.hatch_style = const.HATCH_STYLE_OUTERMOST  # 0=Normal, 1=Outer, 2=Ignore
-            # Einige CADs nutzen zusätzlich dieses Feld:
-            hatch.dxf.islands_detection_style = 1  # 0=OddEven, 1=Outer, 2=Ignore
-        except Exception:
-            pass
-
-        hatch.paths.add_polyline_path(outer, is_closed=True, flags=const.BOUNDARY_PATH_OUTERMOST)
-        for hole in (innerL, innerR, pass_hole):
-            hatch.paths.add_polyline_path(hole, is_closed=True)
-
-
         # Innenkonturen beider Gräben (mit Lücken am Pass)
         origin_front1 = (x_start, 0.0)
-        origin_front2 = (x_start + L1 + p_w + CLR_LR, 0.0)
-
-        # Gibt es neben dem aktuellen Merge noch weitere Durchstiche?
-        has_pass_left  = (i > 0) and (_pass_for_between(passes, i)   is not None)    # zwischen BG(i) und BG(i-1)
-        has_pass_right = (i+2 < len(trenches)) and (_pass_for_between(passes, i+2) is not None)  # zwischen BG(i+1) und BG(i+2)
-
-        # Außenlinien unten durchgehend, aber linke/rechte Außenkante nur an den Cluster-Enden
-        msp.add_lwpolyline([(xL, 0.0), (xR, 0.0)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        if not has_pass_left:
-            msp.add_lwpolyline([(xL, 0.0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        if not has_pass_right:
-            msp.add_lwpolyline([(xR, 0.0), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Obere Deckensegmente (wie gehabt geclippt über der Passage)
-        xSeamInner = x_start + CLR_LR + L1
-        xStep = xSeamInner + (CLR_LR if T1 >= T2 else 0.0)
+        origin_front2 = (x_start + left_clear + L1 + p_w, 0.0)
 
         # Innenkonturen links (mit Lücke am rechten Ende = Passbreite)
         gap_len_l = min(L1, max(0.0, p_w))
         draw_trench_front_lr(
             msp, origin_front1, L1, T1,
-            clear_left=CLR_LR, clear_right=0.0, clear_bottom=CLR_BOT,
+            clear_left=left_clear, 
+            clear_right=0.0, 
+            clear_bottom=CLR_BOT,
             top_len_from_left=L1,
             gap_top_from_left=max(0.0, L1 - gap_len_l),   # <— Lücke am rechten Ende
             gap_top_len=gap_len_l,
@@ -860,7 +809,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         gap_len_r = min(L2, max(0.0, p_w))
         draw_trench_front_lr(
             msp, origin_front2, L2, T2,
-            clear_left=0.0, clear_right=CLR_LR, clear_bottom=CLR_BOT,
+            clear_left=0.0, 
+            clear_right=right_clear,
+            clear_bottom=CLR_BOT,
             top_clip_left=0.0,
             gap_top_from_left=0.0,                         # <— Lücke ab Anfang
             gap_top_len=gap_len_r,
@@ -956,7 +907,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     # Start ganz links am Cluster (Innenkante vom ersten Graben)
                     draw_pipe_front(
                         msp,
-                        origin_front=(x_start + CLR_LR, CLR_BOT),
+                        origin_front=(x_start + left_clear, CLR_BOT),
                         trench_inner_length=L_span,
                         diameter=d,
                     )
@@ -964,6 +915,60 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     # optional: alle Gräben des Clusters als 'Pipe gezeichnet' markieren
                     for k in range(i, last_idx + 1):
                         drawn_pipe.add(k + 1)
+
+        # --- HATCH: Rand-Schraffur für Cluster (nur einmal am linken Clusteranfang) ---
+        def _hatch_rect(x0, y0, x1, y1):
+            if x1 - x0 <= 1e-9 or y1 - y0 <= 1e-9:
+                return
+            h = msp.add_hatch(color=4, dxfattribs={"layer": LAYER_HATCH})
+            h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
+                            angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
+            h.paths.add_polyline_path([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], is_closed=True)
+
+        EPS = 1e-4  # 0,1 mm nach innen
+        if not has_pass_left:
+            # Cluster-Spanne wie gehabt bestimmen (last_idx, L_combo_cluster)
+            last_idx = i
+            Ls, Ts, PWs = [], [], []
+            idx = i
+            while True:
+                Ls.append(float(trenches[idx]["length"]))
+                Ts.append(float(trenches[idx]["depth"]))
+                if idx + 1 < len(trenches):
+                    p_next = _pass_for_between(passes, idx + 1)
+                    if p_next is not None:
+                        PWs.append(float(p_next["length"]))
+                        last_idx = idx + 1
+                        idx += 1
+                        continue
+                break
+
+            # *** Geometrie-basiert statt „zusammengerechnet“ ***
+            x_left_outer  = x_start
+            x_left_inner  = x_start + CLR_LR
+
+            if not has_pass_right:
+                # rechte Wand gehört zum rechten Graben dieser Merge-Zeichnung
+                x_right_inner = origin_front2[0] + L2                  # ← exakt die gezeichnete Innenkante
+                x_right_outer = x_right_inner + right_clear
+                T_right       = T2
+            else:
+                # Cluster geht weiter: rechte Außenkante aus Cluster-Spanne ableiten
+                x_right_outer = x_start + left_clear + sum(Ls) + sum(PWs) + right_clear
+                x_right_inner = x_right_outer - right_clear
+                T_right = float(trenches[last_idx]["depth"])
+
+            # 1) Bodenband
+            _hatch_rect(x_left_outer + EPS, EPS,
+                        x_right_outer - EPS, max(CLR_BOT - EPS, 0.0))
+
+            # 2) Linke Seitenwand
+            _hatch_rect(x_left_outer + EPS, CLR_BOT + EPS,
+                        x_left_inner  - EPS, CLR_BOT + T1 - EPS)
+
+            # 3) Rechte Seitenwand
+            _hatch_rect(x_right_inner + EPS, CLR_BOT + EPS,
+                        x_right_outer - EPS, CLR_BOT + T_right - EPS)
 
         # Durchstich (Front)
         draw_pass_front(
@@ -973,18 +978,31 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             trench_depth=max(T1, T2),
             width=p_w,
             offset=p_off,
-            clearance_left=CLR_LR,
+            clearance_left=left_clear,
             clearance_bottom=CLR_BOT,
             pattern=pas.get("pattern", "EARTH"),
             hatch_scale=HATCH_SCALE,
             seed_point=(0.0, 0.0),
         )
 
+        msp.add_lwpolyline(
+            [(x_inner_left - EPS_JOIN, CLR_BOT), (x_inner_right + EPS_JOIN, CLR_BOT)],
+            dxfattribs={"layer": LAYER_TRENCH_IN},
+        )
+
+        # Außenlinien unten durchgehend, aber linke/rechte Außenkante nur an den Cluster-Enden
+        msp.add_lwpolyline([(xL, 0.0), (xR, 0.0)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        if not has_pass_left:
+            msp.add_lwpolyline([(xL, 0.0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        if not has_pass_right:
+            msp.add_lwpolyline([(xR, 0.0), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
         # Bodennaht unter Passage
-        x_bridge0 = x_start + CLR_LR + L1
+        x_bridge0 = x_start + left_clear + L1                  # statt + CLR_LR
         x_bridge1 = x_bridge0 + p_w
         if x_bridge1 - x_bridge0 > 1e-9 and PASS_BOTTOM_GAP > 0:
-            msp.add_lwpolyline([(x_bridge0, CLR_BOT), (x_bridge1, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
+            msp.add_lwpolyline([(x_bridge0, CLR_BOT), (x_bridge1, CLR_BOT)],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
 
         # Aufmaß: Durchstich nur einmal je Naht, Baugräben nur einmal je Index
         if (i+1) not in printed_pass:
@@ -998,12 +1016,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             printed_trench.add(i+2)
 
         # Bookkeeping:
-        trench_origin_x[i] = x_start
-        trench_origin_x[i+1] = x_start + L1 + p_w + CLR_LR
-        cursor_x = max(cursor_x, x_start + L_combo + 2*CLR_LR + GAP_BG)
+        trench_origin_x[i]   = x_start
+        trench_origin_x[i+1] = x_start + left_clear + L1 + p_w # statt + CLR_LR
+        cursor_x = max(cursor_x, x_start + left_clear + L_combo + right_clear + GAP_BG)
         skip_single_next = True   # rechter BG (i+1) ist bereits als Teil des Merges gezeichnet
         i += 1                    # nur um 1 vorgehen, damit Naht (i+1)-(i+2) noch geprüft wird
-
 
     # ---------- Aufmaß-Block als MText ----------
     sorted_aufmass = _sort_aufmass_lines(aufmass)
