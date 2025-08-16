@@ -255,6 +255,18 @@ def _sort_aufmass_lines(lines: list[str]) -> list[str]:
 
     return [l for _, _, _, _, l in sorted(((*key(l, i), l) for i, l in enumerate(lines)))]
 
+def _append_surface_segments_aufmass(trench_no: int, seg_list: list[dict], aufmass: list[str]) -> None:
+    n = len(seg_list)
+    for k, s in enumerate(seg_list, start=1):
+        length = float(s.get("length", 0) or 0.0)
+        off    = float(s.get("offset", 0) or 0.0)
+        # Äußere Segmente erhalten +offset auf genau einer Seite:
+        add_off = off if (k == 1 or k == n) else 0.0
+        length_adj = length + add_off
+        aufmass.append(
+            f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Material={s.get('material','')}"
+        )
+
 # -----------------------------------------------------
 # 1) START SESSION
 # -----------------------------------------------------
@@ -681,10 +693,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         } for s in seg_list],
                         add_dims=True,
                     )
-                    for k, s in enumerate(seg_list, start=1):
-                        aufmass.append(
-                            f"Oberfläche {i+1}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
-                        )
+                    _append_surface_segments_aufmass(i+1, seg_list, aufmass)
                 else:
                     off = float(seg_list[0].get("offset", 0) or 0)
                     if off:
@@ -831,10 +840,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                                "material": s.get("material", "")} for s in seg_list_L],
                     add_dims=True,
                 )
-                for k, s in enumerate(seg_list_L, start=1):
-                    aufmass.append(
-                        f"Oberfläche {i+1}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
-                    )
+                _append_surface_segments_aufmass(i+1, seg_list_L, aufmass)
             else:
                 offL = float(seg_list_L[0].get("offset", 0) or 0)
                 if offL:
@@ -854,10 +860,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                                "material": s.get("material", "")} for s in seg_list_R],
                     add_dims=True,
                 )
-                for k, s in enumerate(seg_list_R, start=1):
-                    aufmass.append(
-                        f"Oberfläche {i+2}.{k}: Randzone={s.get('offset',0)} m  Länge={s.get('length',0)} m  Material={s.get('material','')}"
-                    )
+                _append_surface_segments_aufmass(i+2, seg_list_R, aufmass)
             else:
                 offR = float(seg_list_R[0].get("offset", 0) or 0)
                 if offR:
@@ -916,57 +919,53 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     for k in range(i, last_idx + 1):
                         drawn_pipe.add(k + 1)
 
-        # --- HATCH: Rand-Schraffur für Cluster (nur einmal am linken Clusteranfang) ---
+        # --- HATCH: Rand-Schraffur: Boden+links am Clusteranfang, rechts am Clusterende ---
         def _hatch_rect(x0, y0, x1, y1):
-            if x1 - x0 <= 1e-9 or y1 - y0 <= 1e-9:
+            w = x1 - x0; h = y1 - y0
+            if w <= 1e-9 or h <= 1e-9:
                 return
-            h = msp.add_hatch(color=4, dxfattribs={"layer": LAYER_HATCH})
-            h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
-                            angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
-            h.paths.add_polyline_path([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], is_closed=True)
+            band = max(min(w, h), 1e-3)
+            angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
+            scale = min(HATCH_SCALE, band/2.0)
+            hobj = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
+            hobj.set_pattern_fill(HATCH_PATTERN, scale=scale, angle=angle)
+            ox = (x0+x1)*0.5; oy = (y0+y1)*0.5
+            try: hobj.set_pattern_origin((ox, oy))
+            except AttributeError: pass
+            hobj.paths.add_polyline_path([(x0,y0),(x1,y0),(x1,y1),(x0,y1)], is_closed=True)
 
-        EPS = 1e-4  # 0,1 mm nach innen
+        EPS = 1e-4
+
+        # Geometrie für diesen Merge (gilt für beide Seiten)
+        x_left_outer  = x_start
+        x_left_inner  = x_start + left_clear
+        x_right_outer = x_start + left_clear + L1 + p_w + L2 + right_clear  # = xR
+        x_right_inner = x_right_outer - right_clear
+        T_right       = T2  # Clusterende → rechter Graben dieses Merges
+
+        # 1) Bodenband + linke Wand: nur am Clusteranfang
         if not has_pass_left:
-            # Cluster-Spanne wie gehabt bestimmen (last_idx, L_combo_cluster)
-            last_idx = i
-            Ls, Ts, PWs = [], [], []
-            idx = i
+            # rechte Außenkante des gesamten Clusters ermitteln
+            total = L1
+            j = i
             while True:
-                Ls.append(float(trenches[idx]["length"]))
-                Ts.append(float(trenches[idx]["depth"]))
-                if idx + 1 < len(trenches):
-                    p_next = _pass_for_between(passes, idx + 1)
-                    if p_next is not None:
-                        PWs.append(float(p_next["length"]))
-                        last_idx = idx + 1
-                        idx += 1
-                        continue
-                break
+                p_next = _pass_for_between(passes, j + 1)
+                if p_next is None:
+                    break
+                total += float(p_next["length"])
+                j += 1
+                total += float(trenches[j]["length"])
+                # läuft weiter, bis kein Pass mehr folgt
 
-            # *** Geometrie-basiert statt „zusammengerechnet“ ***
-            x_left_outer  = x_start
-            x_left_inner  = x_start + CLR_LR
+            x_right_outer_cluster = x_start + left_clear + total + CLR_LR  # rechts am Clusterende immer CLR_LR
 
-            if not has_pass_right:
-                # rechte Wand gehört zum rechten Graben dieser Merge-Zeichnung
-                x_right_inner = origin_front2[0] + L2                  # ← exakt die gezeichnete Innenkante
-                x_right_outer = x_right_inner + right_clear
-                T_right       = T2
-            else:
-                # Cluster geht weiter: rechte Außenkante aus Cluster-Spanne ableiten
-                x_right_outer = x_start + left_clear + sum(Ls) + sum(PWs) + right_clear
-                x_right_inner = x_right_outer - right_clear
-                T_right = float(trenches[last_idx]["depth"])
-
-            # 1) Bodenband
             _hatch_rect(x_left_outer + EPS, EPS,
-                        x_right_outer - EPS, max(CLR_BOT - EPS, 0.0))
-
-            # 2) Linke Seitenwand
+                        x_right_outer_cluster - EPS, max(CLR_BOT - EPS, 0.0))
             _hatch_rect(x_left_outer + EPS, CLR_BOT + EPS,
                         x_left_inner  - EPS, CLR_BOT + T1 - EPS)
 
-            # 3) Rechte Seitenwand
+        # 2) Rechte Wand: nur am Clusterende (dein Code)
+        if not has_pass_right and right_clear > 2*EPS:
             _hatch_rect(x_right_inner + EPS, CLR_BOT + EPS,
                         x_right_outer - EPS, CLR_BOT + T_right - EPS)
 
