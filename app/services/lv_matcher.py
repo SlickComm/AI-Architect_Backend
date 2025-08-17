@@ -7,43 +7,35 @@ from dotenv import load_dotenv
 
 from openai import AsyncOpenAI
 
+from app.services.lv_loader import load_lv
+
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
 
 # OpenAI-Key
 async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# -------------------  Katalog laden  -------------------
-CATALOG_FILES = [
-    "app/specifications/2_preiskatalog-strassenbauarbeiten.json",
-    "app/specifications/3_preiskatalog-erdarbeiten.json",
-    "app/specifications/5_preiskatalog-rohrleitungsarbeiten.json",
-]
-
-CATALOG: List[Dict[str, Any]] = []
-for f in CATALOG_FILES:
-    CATALOG += json.loads(Path(f).read_text(encoding="utf-8"))
+CATALOG: List[Dict[str, Any]] = load_lv()
 
 # -----------------  simple Vorfilter  ------------------
 def _rough_filter(line: str) -> List[Dict[str, Any]]:
     """
-    Gibt einen verkleinerten Katalog-Ausschnitt (< ~120 Positionen) zurück,
-    damit der Prompt im 16k-Kontext bleibt und Kosten spart.
-    Das Heuristik-Matching kannst du nach Belieben verfeinern.
+    Verkleinerter Ausschnitt (<~150 Einträge) basierend auf Volltext in Beschreibung/Code.
     """
     kw = line.lower()
+    def score(p: Dict[str, Any]) -> int:
+        s = (p.get("description") or "").lower()
+        c = (p.get("code") or "").lower()
+        sc = 0
+        for token in ("rohr","graben","oberfläche","pflaster","gehweg","bord","fuge","beton","asphalt"):
+            if token in s: sc += 2
+        if any(tok in s for tok in kw.split()): sc += 1
+        if any(tok in c for tok in kw.split()): sc += 1
+        return sc
 
-    def ok(p):
-        cat = p.get("category", "").lower()
-        return (
-            any(w in cat for w in ("rohr", "graben", "leitungs"))
-            or str(p.get("dn", "")).lower() in kw
-            or str(p.get("rohrgrabentiefe_m", "")).lower() in kw
-        )
-
-    subset = [p for p in CATALOG if ok(p)]
-    return subset[:120] if subset else CATALOG[:120]
-
+    ranked = sorted(CATALOG, key=score, reverse=True)
+    head = [p for p in ranked if score(p) > 0][:150]    
+    return head if head else ranked[:150]
 
 # ------------------  GPT-Matching  ----------------------
 SYSTEM_PROMPT = """\

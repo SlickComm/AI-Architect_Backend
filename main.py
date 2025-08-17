@@ -22,6 +22,7 @@ from app.cad.passages import register_layers as reg_pass, draw_pass_front
 from app.services.lv_matcher import best_matches_batch, parse_aufmass
 from app.invoices.builder import make_invoice
 from app.routes import billing_routes
+from app.routes import lv_routes
 
 from app.utils.session_manager import session_manager
 
@@ -54,6 +55,7 @@ class InvoiceRequest(BaseModel):
     mapping:   List[dict]
 
 app.include_router(billing_routes.router, tags=["Billing"])
+app.include_router(lv_routes.router, tags=["LV"])
 
 # -----------------------------------------------------
 # START HELPER ADD-MODE
