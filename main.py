@@ -45,12 +45,19 @@ app.add_middleware(
 class MatchRequest(BaseModel):
     session_id: str
 
+class AufmassLinesRequest(BaseModel):
+    session_id: str
+    lines: List[str]
+
 class InvoiceRequest(BaseModel):
     session_id: str
     mapping:   List[dict]
 
 app.include_router(billing_routes.router, tags=["Billing"])
 
+# -----------------------------------------------------
+# START HELPER ADD-MODE
+# -----------------------------------------------------
 def _surfaces_for_trench(all_surfaces, trench_idx_1based: int):
     # keep original order; if "seq" is set, sort by it
     lst = [s for s in all_surfaces if int(s.get("for_trench", 0)) == trench_idx_1based]
@@ -267,6 +274,193 @@ def _append_surface_segments_aufmass(trench_no: int, seg_list: list[dict], aufma
             f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Material={s.get('material','')}"
         )
 
+def _get_manual_aufmass_lines(session: dict) -> list[str] | None:
+    elems = session.get("elements", [])
+    # jüngsten Override nehmen
+    for e in reversed(elems):
+        if (e.get("type","").lower() == "aufmass_override"
+            and isinstance(e.get("lines"), list)):
+            # trimmen + leere raus
+            return [str(x).strip() for x in e["lines"] if str(x).strip()]
+    return None
+
+def _set_manual_aufmass_lines(session: dict, lines: list[str]) -> None:
+    # vorhandene Overrides entfernen (wir halten genau einen)
+    elems = session.setdefault("elements", [])
+    elems[:] = [e for e in elems if (e.get("type","").lower() != "aufmass_override")]
+    elems.append({
+        "type": "aufmass_override",
+        "lines": [str(x).strip() for x in lines if str(x).strip()],
+    })
+# -----------------------------------------------------
+# END HELPER ADD-MODE
+# -----------------------------------------------------
+
+# -----------------------------------------------------
+# START HELPER EDIT-MODE
+# -----------------------------------------------------
+# --- Synonyme & Normalisierung --------------------------------------------
+TYPE_ALIASES = {
+    "druckrohr": "Rohr",
+    "leitung": "Rohr",
+    "kanal": "Rohr",
+    "bg": "Baugraben",
+    "graben": "Baugraben",
+    "oberfläche": "Oberflächenbefestigung",
+    "oberflaeche": "Oberflächenbefestigung",
+    "pflaster": "Oberflächenbefestigung",
+    "gehwegplatten": "Oberflächenbefestigung",
+    "mosaiksteine": "Oberflächenbefestigung",
+}
+
+FIELD_ALIASES = {
+    "l": "length", "länge": "length", "laenge": "length",
+    "b": "width",  "breite": "width",
+    "t": "depth",  "tiefe": "depth",
+    "dn": "diameter", "durchmesser": "diameter", "ø": "diameter", "diameter": "diameter",
+    "randzone": "offset", "offset": "offset",
+    "material": "material", "pattern": "pattern",
+}
+
+def _norm_text(s: str) -> str:
+    return (s or "").strip().lower().replace("ä","ae").replace("ö","oe").replace("ü","ue").replace("ß","ss")
+
+def _normalize_type_aliases(t: str) -> str:
+    t0 = _norm_text(t)
+    if t0 in TYPE_ALIASES: return TYPE_ALIASES[t0]
+    if "oberflaeche" in t0 or "oberflaechen" in t0: return "Oberflächenbefestigung"
+    if "durchstich" in t0: return "Durchstich"
+    if "rohr" in t0: return "Rohr"
+    if "baugraben" in t0 or "graben" in t0: return "Baugraben"
+    return t
+
+import re
+
+def _num_to_meters(x) -> float | None:
+    # akzeptiere float/int direkt
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = _norm_text(str(x))
+    s = s.replace(",", ".").strip()
+
+    # DNxxx → Meter
+    m = re.match(r"^dn\s*(\d+)\b", s)
+    if m:
+        return float(m.group(1)) / 1000.0
+
+    # Ø300mm / 300 mm / 30cm / 3m
+    m = re.match(r"^([0-9]*\.?[0-9]+)\s*(mm|cm|m)?$", s)
+    if m:
+        val = float(m.group(1))
+        unit = (m.group(2) or "m")
+        if unit == "mm": return val / 1000.0
+        if unit == "cm": return val / 100.0
+        return val
+
+    # „Ø0.3“ ohne Einheit
+    m = re.match(r"^([0-9]*\.?[0-9]+)$", s)
+    if m:
+        return float(m.group(1))
+
+    # Fallback: suche "... mm" irgendwo
+    m = re.search(r"([0-9]*\.?[0-9]+)\s*mm", s)
+    if m:
+        return float(m.group(1))/1000.0
+    return None
+
+def _coerce_updates(upd: dict) -> dict:
+    out = {}
+    for k, v in (upd or {}).items():
+        key = FIELD_ALIASES.get(_norm_text(k), k)
+        if key in {"length","width","depth","diameter","offset"}:
+            mv = _num_to_meters(v)
+            if mv is not None:
+                out[key] = mv
+        elif key in {"material","pattern"}:
+            out[key] = str(v)
+    return out
+
+# --- Heuristik: wenn Selection unvollständig/uneindeutig -------------------
+def _resolve_selection_heuristic(elems: list[dict], sel: dict) -> int | None:
+    t = _normalize_type_aliases(sel.get("type",""))
+    tn = t.lower()
+
+    def matches(i,e):
+        et = e.get("type","").lower()
+        if tn == "baugraben":
+            if "baugraben" not in et: return False
+            ti = sel.get("trench_index")
+            return (ti is None) or (int(e.get("trench_index",0)) == int(ti))
+        if tn == "rohr":
+            if "rohr" not in et: return False
+            ft = sel.get("for_trench")
+            return (ft is None) or (int(e.get("for_trench",0)) == int(ft))
+        if "oberflächenbefest" in tn or "oberflaechenbefest" in tn:
+            if ("oberflächenbefest" not in et) and ("oberflaechenbefest" not in et): return False
+            ft = sel.get("for_trench"); seq = sel.get("seq")
+            ok = True
+            if ft is not None: ok &= int(e.get("for_trench",0)) == int(ft)
+            if seq is not None: ok &= int(e.get("seq",0) or 0) == int(seq)
+            return ok
+        if tn == "durchstich":
+            if "durchstich" not in et: return False
+            b = sel.get("between")
+            if b is None: return True
+            return int(e.get("between", -1)) == int(b)
+        return False
+
+    cand = [i for i,e in enumerate(elems) if matches(i,e)]
+    if len(cand) == 1:
+        return cand[0]
+    if len(cand) > 1:
+        # nimm das zuletzt angelegte (stabil: letzter Treffer)
+        return cand[-1]
+
+    # Fallback: Typ alleine
+    def typ(i,e):
+        et = e.get("type","").lower()
+        if tn == "baugraben": return "baugraben" in et
+        if tn == "rohr": return "rohr" in et
+        if tn == "durchstich": return "durchstich" in et
+        return ("oberflächenbefest" in et) or ("oberflaechenbefest" in et)
+
+    cand = [i for i,e in enumerate(elems) if typ(i,e)]
+    if len(cand) == 1:
+        return cand[0]
+    if len(cand) > 1:
+        return cand[-1]
+    return None
+
+def _build_edit_context(session: dict) -> str:
+    elems = session.get("elements", [])
+    def tnorm(e): return (e.get("type","") or "").lower()
+
+    trenches = [e for e in elems if "baugraben" in tnorm(e)]
+    pipes    = [e for e in elems if "rohr" in tnorm(e)]
+    passes   = [e for e in elems if "durchstich" in tnorm(e)]
+    surfs    = [e for e in elems if ("oberflächenbefest" in tnorm(e) or "oberflaechenbefest" in tnorm(e))]
+
+    from collections import defaultdict
+    surf_idx = defaultdict(list)
+    for s in surfs:
+        ft = int(s.get("for_trench", 0) or 0)
+        seq = int(s.get("seq", 0) or 0)
+        if ft: surf_idx[ft].append(seq)
+
+    lines = []
+    if trenches:
+        lines.append("Baugräben: " + ", ".join(str(int(t.get("trench_index", i+1))) for i,t in enumerate(trenches)))
+    if pipes:
+        lines.append("Rohre in BG: " + ", ".join(sorted({str(int(p.get("for_trench",0))) for p in pipes if p.get("for_trench")})))
+    if passes:
+        lines.append("Durchstiche: " + ", ".join(sorted({f"{int(p.get('between',0))}-{int(p.get('between',0))+1}" for p in passes if p.get("between")})))
+    if surf_idx:
+        lines.append("Oberflächen: " + "; ".join(f"BG {k}: seq {sorted(v)}" for k,v in surf_idx.items()))
+    return "\n".join(lines) or "keine"
+# -----------------------------------------------------
+# END HELPER EDIT-MODE
+# -----------------------------------------------------
+
 # -----------------------------------------------------
 # 1) START SESSION
 # -----------------------------------------------------
@@ -278,6 +472,48 @@ def start_session():
     und gibt session_id zurück.
     """
     return session_manager.create_session()
+
+@app.get("/session")
+def get_session(session_id: str):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session unknown")
+    return session
+
+@app.get("/get-aufmass-lines")
+def get_aufmass_lines(session_id: str):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
+
+    # 1) Falls es manuelle Zeilen gibt → diese zurück
+    manual = _get_manual_aufmass_lines(session)
+    if manual:
+        return {"lines": manual}
+
+    # 2) sonst letzten "aufmass"-Block (Auto) in Zeilen aufsplitten
+    elems = session.get("elements", [])
+    last_auto = next(
+        (e for e in reversed(elems) if (e.get("type","").lower() == "aufmass")),
+        None
+    )
+    text = (last_auto or {}).get("text", "") or ""
+    # Header "Aufmaß:" entfernen und echte Zeilen liefern
+    lines = [
+        ln.strip() for ln in text.replace("\r","\n").split("\n")
+        if ln.strip() and not ln.strip().lower().startswith("aufmaß")
+    ]
+    return {"lines": lines}
+
+@app.post("/set-aufmass-lines")
+def set_aufmass_lines(req: AufmassLinesRequest):
+    session = session_manager.get_session(req.session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
+
+    _set_manual_aufmass_lines(session, req.lines)
+    session_manager.update_session(req.session_id, session)
+    return {"status": "ok"}
 
 # -----------------------------------------------------
 # ADD ELEMENT
@@ -1022,7 +1258,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         i += 1                    # nur um 1 vorgehen, damit Naht (i+1)-(i+2) noch geprüft wird
 
     # ---------- Aufmaß-Block als MText ----------
+     # ... nach dem Aufbau von "aufmass" (Liste) ...
     sorted_aufmass = _sort_aufmass_lines(aufmass)
+
+    # ► Manuelle Zeilen bevorzugen, falls vorhanden
+    manual = _get_manual_aufmass_lines(parsed_json)
+    if manual:
+        # optional trotzdem sortieren; wenn Reihenfolge 1:1 beibehalten
+        # einfach: sorted_aufmass = manual
+        sorted_aufmass = _sort_aufmass_lines(manual)
+
     msp.add_mtext(
         "Aufmaß:\n" + "\n".join(sorted_aufmass),
         dxfattribs={
@@ -1049,47 +1294,146 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
         raise HTTPException(404, "Session unknown")
 
     prompt = f"""
-Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON liefern.
+    Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON liefern.
 
-AUFGABE
-• Interpretiere die Anweisung {instruction!r}.
-• Bestimme GENAU EIN Zielobjekt und die zu ändernden Felder.
+    ANWEISUNG: {instruction!r}
 
-ADRESSIERUNGSREGELN (sehr wichtig)
-• Typen: "Baugraben" | "Rohr" | "Oberflächenbefestigung" | "Durchstich".
-• Baugraben N        → selection.trench_index = N (1-basiert).
-• Rohr im Baugraben N / Rohr zu Baugraben N
-                     → selection.for_trench = N.
-• Oberflächenbefestigung im/zu Baugraben N
-                     → selection.for_trench = N, optional selection.seq = M
-                       (bei "erste/zweite Oberfläche ...").
-• Durchstich zwischen Baugraben N und N+1
-                     → selection.between = N.
-  Falls "dritter Durchstich" o. ä. ohne Between:
-                     → selection.ordinal = 3 (1-basiert in Reihenfolge).
-• Synonyme erkennen: "BG", "Baugr.", "Graben", "im ersten", "zu Baugraben 2", etc.
+    KONTEXT (Bestand):
+    {_build_edit_context(session)}
 
-WAS NICHT TUN
-• KEINE neuen Elemente hinzufügen oder löschen.
-• KEIN 'trench_index' bei Nicht-Baugraben setzen.
+    ZIEL
+    • Bestimme GENAU EIN Zielobjekt und die zu ändernden Felder.
 
-ERLAUBTE ÄNDERUNGEN
-length | width | depth | diameter | material | offset | pattern
+    ADRESSIERUNG
+    • Typen: "Baugraben" | "Rohr" | "Oberflächenbefestigung" | "Durchstich".
+    • Baugraben N        → selection.trench_index = N (1-basiert).
+    • Rohr im/zu Baugraben N → selection.for_trench = N.
+    • Oberflächenbefestigung im/zu Baugraben N → selection.for_trench=N, optional selection.seq=M.
+    • Durchstich zwischen Baugraben N und N+1 → selection.between = N.
+    • Synonyme verstehen: „BG“, „Graben“, „Druckrohr“, „Oberfläche“, „Gehwegplatten“, „Pflaster“, etc.
 
-AUSGABEFORMAT GENAU SO:
+    FALLBACKS
+    • Wenn die Anweisung keinen Index nennt und genau EIN passendes Objekt existiert,
+    adressiere dieses.
+    • Wenn mehrere existieren und kein Index genannt wird, wähle das zuletzt angelegte.
+
+    WAS NICHT TUN
+    • KEINE neuen Elemente hinzufügen oder löschen.
+    • KEIN 'trench_index' bei Nicht-Baugraben setzen.
+
+    ERLAUBTE ÄNDERUNGEN
+    length | width | depth | diameter | material | offset | pattern
+    • „DN300“ o. ä. → diameter = 0.30 (Meter).
+    • Komma-/Punktwerte und Einheiten mm/cm/m korrekt interpretieren.
+
+    ANTWORT (exakt):
+    {{
+    "selection": {{
+        "type": "Baugraben | Rohr | Oberflächenbefestigung | Durchstich",
+        "trench_index": 0,
+        "for_trench": 0,
+        "seq": 0,
+        "between": 0,
+        "ordinal": 0
+    }},
+    "set": {{}},
+    "answer": "kurz auf Deutsch"
+    }}
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo-0125",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a JSON API."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=400,
+            temperature=0.0,
+        )
+        data = json.loads(response.choices[0].message.content)
+    except Exception as e:
+        raise HTTPException(500, f"Fehler ChatGPT: {e}")
+
+    sel = data.get("selection") or {}
+    updates_raw = data.get("set") or {}
+    if not isinstance(sel, dict) or not sel.get("type"):
+        raise HTTPException(400, "Ungültige LLM-Antwort: selection fehlt/leer.")
+
+    # 1) Normalisieren
+    sel["type"] = _normalize_type_aliases(sel["type"])
+    updates = _coerce_updates(updates_raw)
+
+    # 2) Ziel finden (LLM-Auswahl → Backend-Heuristik als Fallback)
+    elems = session.setdefault("elements", [])
+    idx = _find_target_index_by_selection(elems, sel)
+    if idx is None:
+        idx = _resolve_selection_heuristic(elems, sel)
+    if idx is None:
+        raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
+
+    # 3) Patch anwenden
+    _apply_update(elems[idx], updates)
+
+    # 4) Normalisieren + speichern
+    _normalize_and_reindex(session)
+    session_manager.update_session(session_id, session)
+
+    return {
+        "status": "ok",
+        "updated_json": session,
+        "answer": data.get("answer", "")
+    }
+
+# -----------------------------------------------------
+# Delete Element (robust, single + bulk)
+# -----------------------------------------------------
+@app.post("/remove-element")
+def remove_element(session_id: str, instruction: str = Body(..., embed=True)):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session unknown")
+
+    prompt = f"""
+Du bist eine JSON-API und gibst AUSSCHLIESSLICH gültiges JSON zurück.
+
+ANWEISUNG: {instruction!r}
+
+KONTEXT (Bestand – komprimiert):
+{_build_edit_context(session)}
+
+ZIEL
+• Bestimme, welches Objekt (oder welche Menge) zu löschen ist.
+• Nutze Synonyme: „BG“/„Graben“ → Baugraben, „Druckrohr“/„Leitung“ → Rohr,
+  „Oberfläche“/„Pflaster“/„Gehwegplatten“ → Oberflächenbefestigung.
+
+ADRESSIERUNG
+• "Baugraben N"             → selection.trench_index = N
+• "Rohr im/zu BG N"         → selection.for_trench = N
+• "Oberfläche in BG N"      → selection.for_trench = N, optional selection.seq = M
+• "Durchstich zw. BG N & N+1" → selection.between = N
+• Wenn kein Index genannt und genau EIN passendes Objekt existiert → dieses.
+• Wenn mehrere existieren und kein Index → das zuletzt angelegte (Fallback).
+
+MODUS
+• Wenn der Text eindeutig „alle“, „sämtliche“, „komplett“ enthält
+  (z. B. „Lösche alle Oberflächen in BG 2“, „Entferne alle Durchstiche“),
+  setze "mode": "bulk".
+• Sonst "mode": "single".
+
+ANTWORTFORMAT (exakt so!):
 {{
   "selection": {{
     "type": "Baugraben | Rohr | Oberflächenbefestigung | Durchstich",
-    "trench_index": 0,   # nur bei Baugraben
-    "for_trench": 0,     # nur bei Rohr/Oberflächenbefestigung
-    "seq": 0,            # optional für Oberflächenbefestigung
-    "between": 0,        # nur bei Durchstich
-    "ordinal": 0         # optional: 1..k für n-ten Durchstich in Reihenfolge
+    "trench_index": 0,
+    "for_trench": 0,
+    "seq": 0,
+    "between": 0,
+    "ordinal": 0
   }},
-  "set": {{
-    # nur die Felder, die geändert werden sollen
-  }},
-  "answer": "max. 2 Sätze auf Deutsch"
+  "mode": "single" | "bulk",
+  "answer": "kurz auf Deutsch"
 }}
 """
 
@@ -1109,115 +1453,88 @@ AUSGABEFORMAT GENAU SO:
         raise HTTPException(500, f"Fehler ChatGPT: {e}")
 
     sel = data.get("selection") or {}
-    updates = data.get("set") or {}
-    if not isinstance(sel, dict) or not isinstance(updates, dict) or not sel.get("type"):
-        raise HTTPException(400, "Ungültige LLM-Antwort: selection/set fehlen oder sind leer.")
+    if not isinstance(sel, dict) or not sel.get("type"):
+        raise HTTPException(400, "Ungültige LLM-Antwort: selection fehlt/leer.")
+
+    # 1) Normalisieren
+    sel["type"] = _normalize_type_aliases(sel["type"])
+    mode = (data.get("mode") or "single").lower()
+    if mode not in ("single", "bulk"):
+        mode = "single"
 
     elems = session.setdefault("elements", [])
-    idx = _find_target_index_by_selection(elems, sel)
-    if idx is None:
-        raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
 
-    _apply_update(elems[idx], updates)
+    # Hilfsfilter: passt Element zu selection?
+    def _matches_bulk(e: dict, s: dict) -> bool:
+        et = (e.get("type","") or "").lower()
+        if et in ("aufmass", "aufmass_override"):  # nie löschen
+            return False
 
-    # Normalize + speichern
+        t = (s.get("type","") or "").lower()
+
+        if "baugraben" in t:
+            if "baugraben" not in et: return False
+            ti = s.get("trench_index", None)
+            return (ti is None) or (int(e.get("trench_index",0)) == int(ti))
+
+        if "rohr" in t:
+            if "rohr" not in et: return False
+            ft = s.get("for_trench", None)
+            return (ft is None) or (int(e.get("for_trench",0)) == int(ft))
+
+        if ("oberflächenbefest" in t) or ("oberflaechenbefest" in t):
+            if ("oberflächenbefest" not in et) and ("oberflaechenbefest" not in et):
+                return False
+            ft = s.get("for_trench", None)
+            seq = s.get("seq", None)
+            ok = True
+            if ft is not None: ok &= int(e.get("for_trench",0)) == int(ft)
+            if seq is not None: ok &= int(e.get("seq",0) or 0) == int(seq)
+            return ok
+
+        if "durchstich" in t:
+            if "durchstich" not in et: return False
+            b = s.get("between", None)
+            # „ordinal“ verwenden wir nur im single-Modus; für bulk ist es egal.
+            return (b is None) or (int(e.get("between", -1)) == int(b))
+
+        return False
+
+    deleted = 0
+
+    # 2) Löschen
+    if mode == "single":
+        # Primär LLM-Selektion, Fallback Heuristik
+        idx = _find_target_index_by_selection(elems, sel)
+        if idx is None:
+            idx = _resolve_selection_heuristic(elems, sel)
+        if idx is None:
+            raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
+
+        # Safety: Meta-Typen nicht löschen
+        t_low = (elems[idx].get("type","") or "").lower()
+        if t_low in ("aufmass", "aufmass_override"):
+            raise HTTPException(400, "Dieses Element ist nicht löschbar.")
+
+        del elems[idx]
+        deleted = 1
+
+    else:  # bulk
+        to_delete = [i for i, e in enumerate(elems) if _matches_bulk(e, sel)]
+        if not to_delete:
+            raise HTTPException(404, f"Keine passenden Elemente für bulk selection={sel} gefunden.")
+        for i in reversed(to_delete):
+            del elems[i]
+        deleted = len(to_delete)
+
+    # 3) Normalisieren + speichern
     _normalize_and_reindex(session)
     session_manager.update_session(session_id, session)
 
+    # Hinweis: Antwort vom LLM ist rein „sprachlich“
     return {
         "status": "ok",
-        "updated_json": session,
-        "answer": data.get("answer", "")
-    }
-
-# -----------------------------------------------------
-# Delete Element
-# -----------------------------------------------------
-@app.post("/remove-element")
-def remove_element(session_id: str, instruction: str = Body(..., embed=True)):
-    session = session_manager.get_session(session_id)
-    if session is None:
-        raise HTTPException(404, "Session unknown")
-
-    prompt = f"""
-Du bist eine JSON-API und darfst AUSSCHLIESSLICH gültiges JSON
-ausgeben, kein Markdown oder sonstigen Text.
-
-------------------------------------------------
-SCHRITT 1 – Element bestimmen
-------------------------------------------------
-• Wenn {instruction!r} eine Ordinalzahl enthält
-  (z. B. „2. Baugraben“, „dritten Rohr“, „vierter Durchstich“ …),
-  wähle genau das Objekt mit diesem `trench_index`
-  (Mapping: erster/1., zweiter/2., … sechster/6.).
-• Andernfalls lösche das **erste** Objekt,
-  dessen `type` zum genannten Begriff passt
-  (Baugraben | Rohr | Oberflächenbefestigung | Durchstich).
-• Bei "Baugraben": trench_index = N.
-• Bei "Rohr" | "Oberflächenbefestigung" | "Durchstich":
-    wähle das Objekt mit for_trench = N (oder seq = N, falls so adressiert).
-
-------------------------------------------------
-SCHRITT 2 – Löschen
-------------------------------------------------
-• Entferne **nur** dieses eine Element.
-• Reihenfolge aller übrigen Objekte beibehalten.
-
-------------------------------------------------
-AUSGABEFORMAT (exakt so!)
-------------------------------------------------
-{{
-  "elements": [... verbleibende Objekte ...],
-  "answer": "max. 2 kurze Sätze auf Deutsch"
-}}
-
-------------------------------------------------
-AKTUELLES JSON
-------------------------------------------------
-{json.dumps(session, indent=2)}
-------------------------------------------------
-AUFGABE
-------------------------------------------------
-Lösche das beschriebene Element jetzt.
-"""
-
-    old_elems = session.get("elements", [])
-    expected_n = len(old_elems) - 1
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": "You are a JSON API."},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=500,
-            temperature=0.0,
-        )
-        data = json.loads(response.choices[0].message.content)
-        
-    except Exception as e:
-        raise HTTPException(500, f"Fehler ChatGPT: {e}")
-
-    if not isinstance(data.get("elements"), list):
-        raise HTTPException(500, "Antwort enthielt kein gültiges 'elements'-Array")
-
-    new_elems = data.get("elements")
-    if not isinstance(new_elems, list) or len(new_elems) != expected_n:
-        raise HTTPException(
-            400,
-            f"Ungültige LLM-Antwort: erwartet {expected_n} Elemente, bekommen "
-            f"{'none' if not isinstance(new_elems, list) else len(new_elems)}."
-        )
-
-    # 4) Session aktualisieren -----------------------------------------
-    session["elements"] = data["elements"]
-    _normalize_and_reindex(session)
-    session_manager.update_session(session_id, session)
-
-    return {
-        "status": "ok",
+        "deleted": deleted,
         "updated_json": session,
         "answer": data.get("answer", "")
     }
