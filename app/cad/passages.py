@@ -1,6 +1,6 @@
 import ezdxf
 from ezdxf.enums import const
-from typing import Tuple
+from typing import Tuple, Optional
 
 LAYER_PASS  = "Durchstich"
 DEFAULT_PAT = "EARTH"
@@ -26,7 +26,7 @@ def draw_pass_front(
     clearance_bottom: float,
     pattern: str = DEFAULT_PAT,
     hatch_scale: float = 0.05,        
-    seed_point: Tuple[float, float] | None = (0.0, 0.0),
+    seed_point: Optional[Tuple[float, float]] = (0.0, 0.0),
 ) -> None:
     ox, oy = trench_origin
 

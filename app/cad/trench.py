@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import ezdxf
-from typing import Tuple
+from typing import Tuple, Optional
 
 # ---------- Konstanten & Layer ----------
 LAYER_TRENCH_OUT = "Baugraben"
@@ -81,16 +83,16 @@ def draw_trench_top(msp, top_left, length, width):
     rect = [(x, y), (x+length, y), (x+length, y+width), (x, y+width)]
     msp.add_lwpolyline(rect, close=True, dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-    y_top = y + width  # obere Innenkante
+    y_top = y + width  
     msp.add_linear_dim(
-        base=(x, y_top + DIM_OFFSET + TOP_DIM_EXTRA),              # Maßlinie ÜBER der oberen Kante
-        p1=(x, y_top), p2=(x + length, y_top),     # entlang der oberen Kante messen
+        base=(x, y_top + DIM_OFFSET + TOP_DIM_EXTRA),            
+        p1=(x, y_top), p2=(x + length, y_top),     
         angle=0,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
 
     msp.add_linear_dim(
-        base=(x - DIM_OFFSET, y),                  # wie gehabt (links)
+        base=(x - DIM_OFFSET, y),                  
         p1=(x, y), p2=(x, y + width), angle=90,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
@@ -102,15 +104,15 @@ def draw_trench_front_lr(
     clear_bottom: float = 0.2,
     bottom_clip_left: float = 0.0, 
     top_clip_left: float = 0.0,
-    top_len_from_left: float | None = None, 
+    top_len_from_left: Optional[float] = None, 
     vertical_clip_right: float = 0.0,
     draw_left_inner: bool = True,
     draw_right_inner: bool = True, 
     draw_outer: bool = True,
-    gap_top_from_left: float | None = None,    # NEW: Lücke in der Decke
-    gap_top_len:       float | None = None,    # NEW: Breite der Lücke
-    gap_bot_from_left: float | None = None,    # optional: Lücke im Boden
-    gap_bot_len:       float | None = None,    # optional
+    gap_top_from_left: Optional[float] = None, 
+    gap_top_len:       Optional[float] = None,   
+    gap_bot_from_left: Optional[float] = None,    
+    gap_bot_len:       Optional[float] = None,    
 ):
     ox, oy = origin
     y_bot = oy + clear_bottom

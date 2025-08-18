@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, Body, HTTPException  
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -12,7 +14,7 @@ import re
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top, draw_trench_front_lr, LAYER_TRENCH_OUT, LAYER_TRENCH_IN, LAYER_HATCH, HATCH_PATTERN, HATCH_SCALE, DIM_OFFSET_FRONT, DIM_TXT_H, DIM_EXE_OFF
 from app.cad.pipe import draw_pipe_front, register_layers as reg_pipe
@@ -158,7 +160,7 @@ def _first_pipe_for_trench(all_pipes, idx: int):
     lst = _pipes_for_trench(all_pipes, idx)
     return lst[0] if lst else None
 
-def _pass_for_between(all_passes, idx: int) -> dict | None:
+def _pass_for_between(all_passes, idx: int) -> Optional[dict]:
     # bevorzugt neues Feld 'between', sonst Legacy-Fallback per Listenposition
     by_between = [p for p in all_passes if p.get("between") is not None]
     if by_between:
@@ -172,7 +174,7 @@ def _pass_for_between(all_passes, idx: int) -> dict | None:
 def _tnorm(e: dict) -> str:
     return e.get("type", "").lower()
 
-def _find_target_index_by_selection(elems: list[dict], sel: dict) -> int | None:
+def _find_target_index_by_selection(elems: list[dict], sel: dict) -> Optional[int]:
     """sel = {type, trench_index? | for_trench? | between?, seq?}"""
     t = (sel.get("type") or "").lower()
 
@@ -276,7 +278,7 @@ def _append_surface_segments_aufmass(trench_no: int, seg_list: list[dict], aufma
             f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Material={s.get('material','')}"
         )
 
-def _get_manual_aufmass_lines(session: dict) -> list[str] | None:
+def _get_manual_aufmass_lines(session: dict) -> Optional[list[str]]:
     elems = session.get("elements", [])
     # jüngsten Override nehmen
     for e in reversed(elems):
@@ -338,7 +340,7 @@ def _normalize_type_aliases(t: str) -> str:
 
 import re
 
-def _num_to_meters(x) -> float | None:
+def _num_to_meters(x) -> Optional[float]:
     # akzeptiere float/int direkt
     if isinstance(x, (int, float)):
         return float(x)
@@ -383,7 +385,7 @@ def _coerce_updates(upd: dict) -> dict:
     return out
 
 # --- Heuristik: wenn Selection unvollständig/uneindeutig -------------------
-def _resolve_selection_heuristic(elems: list[dict], sel: dict) -> int | None:
+def _resolve_selection_heuristic(elems: list[dict], sel: dict) -> Optional[int]:
     t = _normalize_type_aliases(sel.get("type",""))
     tn = t.lower()
 
@@ -1260,15 +1262,17 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         i += 1                    # nur um 1 vorgehen, damit Naht (i+1)-(i+2) noch geprüft wird
 
     # ---------- Aufmaß-Block als MText ----------
-     # ... nach dem Aufbau von "aufmass" (Liste) ...
-    sorted_aufmass = _sort_aufmass_lines(aufmass)
+    # Auto-Aufmaß falls kein manueller Block existiert
+    auto_sorted = _sort_aufmass_lines(aufmass)
 
-    # ► Manuelle Zeilen bevorzugen, falls vorhanden
+    # ► Manuelle Zeilen bevorzugen – und REIHENFOLGE BEIBEHALTEN (Drag & Drop)
     manual = _get_manual_aufmass_lines(parsed_json)
     if manual:
-        # optional trotzdem sortieren; wenn Reihenfolge 1:1 beibehalten
-        # einfach: sorted_aufmass = manual
-        sorted_aufmass = _sort_aufmass_lines(manual)
+        base = [ln.strip() for ln in manual if ln.strip()]
+        extras = [ln for ln in auto_sorted if ln.strip() and ln not in base]
+        sorted_aufmass = base + extras
+    else:
+        sorted_aufmass = auto_sorted
 
     msp.add_mtext(
         "Aufmaß:\n" + "\n".join(sorted_aufmass),
