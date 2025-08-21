@@ -85,7 +85,8 @@ def _normalize_and_reindex(session: dict) -> None:
     N = len(trenches)
 
     keep = []
-    pass_buffer = []  # Durchstiche ohne 'between' sammeln
+    pass_buffer = []   # Durchstiche ohne 'between' sammeln
+    join_buffer = []   # Verbindungen ohne 'between' (z. B. group) sammeln
 
     for e in elems:
         tt = tnorm(e)
@@ -117,6 +118,28 @@ def _normalize_and_reindex(session: dict) -> None:
             else:
                 # später nummerieren
                 pass_buffer.append(e)
+        elif "verbindung" in tt:
+            # bevorzugt 'between'; alternativ 'group' → expandieren
+            if "between" in e and e["between"] is not None:
+                b = int(e.get("between") or 0)
+                if 1 <= b < N:
+                    e["between"] = b
+                    keep.append({"type":"Verbindung","between": b})
+            elif isinstance(e.get("group"), (list, tuple)):
+                # group → auf benachbarte Paare abbilden
+                try:
+                    g = [int(x) for x in e.get("group") if int(x) > 0]
+                except Exception:
+                    g = []
+                # auf gültigen Bereich trimmen
+                g = [x for x in g if 1 <= x <= N]
+                # consecutive pairs: (g[i], g[i+1]) → seam = min(...) wenn Nachbarn
+                for a, b in zip(g, g[1:]):
+                    if abs(a - b) == 1:
+                        seam = min(a, b)
+                        if 1 <= seam < N:
+                            keep.append({"type":"Verbindung","between": seam})
+            # sonst verwerfen
         else:
             keep.append(e)
 
@@ -152,6 +175,20 @@ def _normalize_and_reindex(session: dict) -> None:
             del keep[i]
         else:
             seen_between.add(b)
+
+    # --- Verbindungen deduplizieren; wenn es einen Durchstich an derselben Naht gibt, hat dieser Vorrang ---
+    join_idxs = [i for i, e in enumerate(keep) if "verbindung" in tnorm(e)]
+    join_seen = set()
+    pass_seams = {int(e.get("between", 0) or 0) for e in keep if "durchstich" in tnorm(e)}
+    for i in reversed(join_idxs):
+        b = int(keep[i].get("between", 0) or 0)
+        if not (1 <= b < N):
+            del keep[i]
+            continue
+        if b in pass_seams or b in join_seen:
+            del keep[i]
+        else:
+            join_seen.add(b)
 
     session["elements"] = keep
 
@@ -226,6 +263,17 @@ def _find_target_index_by_selection(elems: list[dict], sel: dict) -> Optional[in
                 return idxs[k-1]
         # Fallback: erster vorhandener Durchstich
         idxs = [i for i, e in enumerate(elems) if "durchstich" in _tnorm(e)]
+        return idxs[0] if idxs else None
+
+    if "verbindung" in t:
+        if "between" in sel and sel["between"] is not None:
+            b = int(sel["between"])
+            cand = [i for i, e in enumerate(elems)
+                    if ("verbindung" in _tnorm(e)) and int(e.get("between", -1)) == b]
+            if cand:
+                return cand[0]
+        # Fallback: erste Verbindung
+        idxs = [i for i, e in enumerate(elems) if "verbindung" in _tnorm(e)]
         return idxs[0] if idxs else None
 
     return None
@@ -317,6 +365,10 @@ TYPE_ALIASES = {
     "pflaster": "Oberflächenbefestigung",
     "gehwegplatten": "Oberflächenbefestigung",
     "mosaiksteine": "Oberflächenbefestigung",
+    "verbindung": "Verbindung",
+    "verbinde": "Verbindung",
+    "verbund": "Verbindung",
+    "connect": "Verbindung",
 }
 
 FIELD_ALIASES = {
@@ -613,6 +665,19 @@ Beispiel B:
   "Ein Durchstich mit einer Länge von 3 Metern wurde zwischen dem zweiten und dritten Baugraben erstellt."
 → {{ "type":"Durchstich", "length":3.0, "between":2 }}
 
+────────────────────────────────────────────
+VERBINDUNG OHNE DURCHSTICH
+────────────────────────────────────────────
+• Verwende type="Verbindung", wenn Baugräben ohne Durchstich verbunden werden sollen.
+• Adressierung:
+    – Verbindung zwischen BG N und N+1:  {{"type":"Verbindung","between": N}}
+    – Liste: „Verbinde Baugraben 1, 2 und 3“
+        → erzeuge zwei Objekte:
+           {{"type":"Verbindung","between":1}},
+           {{"type":"Verbindung","between":2}}
+• Es sind nur benachbarte Gräben erlaubt (|X−Y|==1). Nicht-benachbarte Paare werden ignoriert.
+• Verbindungen sind exklusiv: Falls an derselben Naht ein Durchstich existiert, hat der Durchstich Vorrang.
+• Verbindungen erzeugen KEINE Aufmaß-Zeilen.
 
 ────────────────────────────────────────────
 MEHRERE OBJEKTE IN EINEM SATZ
@@ -665,7 +730,7 @@ Wir arbeiten mit diesem JSON-Schema, wobei bei
 {{
   "elements": [
     {{
-      "type": "string",  # Baugraben | Rohr | Oberflächenbefestigung | Durchstich
+      "type": "string",  # Baugraben | Rohr | Oberflächenbefestigung | Durchstich | Verbindung
       "trench_index": 0, # NUR bei Baugraben
       "for_trench": 0,   # NUR bei Nicht-Baugraben (1-basiger Verweis)
       "seq": 0,          # optional: laufende Nummer innerhalb desselben Typs
@@ -786,13 +851,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     doc.header["$PSLTSCALE"] = 0
 
     # ---------- Elemente vorsortieren ----------
-    trenches, pipes, surfaces, passes = [], [], [], []
+    trenches, pipes, surfaces, passes, joins = [], [], [], [], []
     for el in parsed_json.get("elements", []):
         t = el.get("type", "").lower()
         if "baugraben"           in t: trenches.append(el)
         elif "rohr"              in t: pipes.append(el)
         elif "oberflächenbefest" in t: surfaces.append(el)
         elif "durchstich" in t:          passes.append(el)
+        elif "durchstich"        in t: passes.append(el)
+        elif "verbindung"        in t: joins.append(el)
+
+    join_set = {int(j.get("between", 0) or 0) for j in joins if j.get("between") is not None}
+
+    def _has_link_between(seam_1based: int) -> bool:
+        return (_pass_for_between(passes, seam_1based) is not None) or (seam_1based in join_set)
 
     if not trenches:
         raise HTTPException(400, "Kein Baugraben vorhanden – bitte zuerst /add-element benutzen.")
@@ -881,7 +953,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # Gibt es direkt rechts von BG i einen Durchstich?
         pas = _pass_for_between(passes, i+1)  # between ist 1-basiert
         has_neighbor = (i+1 < len(trenches))
-        merge_next = (pas is not None) and has_neighbor
+        merge_next = has_neighbor and _has_link_between(i+1)
 
         # --------------------------------------------------
         # A) Kein Durchstich zwischen i und i+1
@@ -968,14 +1040,15 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         bg2 = trenches[i+1]
         L2, B2, T2 = map(float, (bg2["length"], bg2["width"], bg2["depth"]))
 
-        if "length" not in pas:
+        join_only = (pas is None) and ((i+1) in join_set)
+        if not join_only and "length" not in pas:
             raise HTTPException(400, "Durchstich ohne Länge (erwarte Feld 'length').")
-        p_w = float(pas["length"])
+        p_w = 0.0 if join_only else float(pas["length"])
         p_off = L1  # Start direkt an der Naht (Innenkante BG1)
 
         # Gibt es neben dem aktuellen Merge noch weitere Durchstiche?
-        has_pass_left  = (i > 0) and (_pass_for_between(passes, i)   is not None)
-        has_pass_right = (i+2 < len(trenches)) and (_pass_for_between(passes, i+2) is not None)
+        has_pass_left  = (i > 0) and _has_link_between(i)
+        has_pass_right = (i+2 < len(trenches)) and _has_link_between(i+2)
 
         left_clear  = 0.0 if has_pass_left  else CLR_LR   # links nur am Clusteranfang
         right_clear = 0.0 if has_pass_right else CLR_LR   # rechts nur am Clusterende
@@ -1033,9 +1106,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         xSeamInner = x_start + left_clear + L1
         xStep = xSeamInner
 
-        add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
-        add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
-        add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
+        if join_only:
+            msp.add_lwpolyline([(xL,   yTopL), (xStep, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xR,   yTopR), (xStep, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xStep, yTopR), (xStep, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        else:
+            add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
+            add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
+            add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
 
         # Innenkonturen beider Gräben (mit Lücken am Pass)
         origin_front1 = (x_start, 0.0)
@@ -1129,7 +1207,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 L_span += float(trenches[idx]["length"])
                 # Gibt es zwischen idx (1-basig: idx+1) und idx+1 (1-basig: idx+2) noch einen Durchstich?
                 if idx + 1 < len(trenches):
-                    p_next = _pass_for_between(passes, idx + 1)  # between ist 1-basiert
+                    seam = idx + 1  # 1-basiert
+                    if seam in join_set:
+                        # Verbindung → keine Zusatzlänge, aber Cluster geht weiter
+                        last_idx = idx + 1
+                        continue
+                    p_next = _pass_for_between(passes, seam)
                     if p_next is not None:
                         L_span += float(p_next["length"])
                         last_idx = idx + 1
@@ -1191,7 +1274,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             total = L1
             j = i
             while True:
-                p_next = _pass_for_between(passes, j + 1)
+                seam = j + 1
+                p_next = _pass_for_between(passes, seam)
+                if seam in join_set:
+                    j += 1
+                    total += float(trenches[j]["length"])
+                    continue
                 if p_next is None:
                     break
                 total += float(p_next["length"])
@@ -1212,19 +1300,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         x_right_outer - EPS, CLR_BOT + T_right - EPS)
 
         # Durchstich (Front)
-        draw_pass_front(
-            msp,
-            trench_origin=origin_front1,
-            trench_len=L_combo,
-            trench_depth=max(T1, T2),
-            width=p_w,
-            offset=p_off,
-            clearance_left=left_clear,
-            clearance_bottom=CLR_BOT,
-            pattern=pas.get("pattern", "EARTH"),
-            hatch_scale=HATCH_SCALE,
-            seed_point=(0.0, 0.0),
-        )
+        if not join_only:
+            draw_pass_front(
+                msp,
+                trench_origin=origin_front1,
+                trench_len=L_combo,
+                trench_depth=max(T1, T2),
+                width=p_w,
+                offset=p_off,
+                clearance_left=left_clear,
+                clearance_bottom=CLR_BOT,
+                pattern=pas.get("pattern", "EARTH"),
+                hatch_scale=HATCH_SCALE,
+                seed_point=(0.0, 0.0),
+            )
 
         msp.add_lwpolyline(
             [(x_inner_left - EPS_JOIN, CLR_BOT), (x_inner_right + EPS_JOIN, CLR_BOT)],
@@ -1246,9 +1335,10 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                             dxfattribs={"layer": LAYER_TRENCH_IN})
 
         # Aufmaß: Durchstich nur einmal je Naht, Baugräben nur einmal je Index
-        if (i+1) not in printed_pass:
-            aufmass.append(f"Durchstich {i+1}: l={p_w} m")
-            printed_pass.add(i+1)
+        if not join_only:
+            if (i+1) not in printed_pass:
+                aufmass.append(f"Durchstich {i+1}: l={p_w} m")
+                printed_pass.add(i+1)
         if (i+1) not in printed_trench:
             aufmass.append(f"Baugraben {i+1}: l={L1} m  b={B1} m  t={T1} m")
             printed_trench.add(i+1)
@@ -1504,6 +1594,11 @@ ANTWORTFORMAT (exakt so!):
             if "durchstich" not in et: return False
             b = s.get("between", None)
             # „ordinal“ verwenden wir nur im single-Modus; für bulk ist es egal.
+            return (b is None) or (int(e.get("between", -1)) == int(b))
+
+        if "verbindung" in t:
+            if "verbindung" not in et: return False
+            b = s.get("between", None)
             return (b is None) or (int(e.get("between", -1)) == int(b))
 
         return False
