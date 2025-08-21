@@ -316,17 +316,46 @@ def _sort_aufmass_lines(lines: list[str]) -> list[str]:
 
     return [l for _, _, _, _, l in sorted(((*key(l, i), l) for i, l in enumerate(lines)))]
 
-def _append_surface_segments_aufmass(trench_no: int, seg_list: list[dict], aufmass: list[str]) -> None:
+def _append_surface_segments_aufmass(
+    trench_no: int,
+    seg_list: list[dict],
+    aufmass: list[str],
+    trench_length: float,
+    trench_width: float
+) -> None:
+    """
+    Schreibt für jede Oberflächen-Stufe eine Aufmaßzeile:
+    - Länge je Segment (bei erstem/letztem Segment mit Randzonen-Verlängerung wie in der Bemaßung),
+    - Breite = Grabenbreite + 2*offset,
+    - Material optional.
+    """
     n = len(seg_list)
+    remaining = float(trench_length)
+
     for k, s in enumerate(seg_list, start=1):
-        length = float(s.get("length", 0) or 0.0)
-        off    = float(s.get("offset", 0) or 0.0)
-        # Äußere Segmente erhalten +offset auf genau einer Seite:
+        off = float(s.get("offset", 0) or 0.0)
+
+        # Segmentlänge robust: fehlende/0-Längen beim letzten Segment = Restlänge
+        raw_len = float(s.get("length", 0) or 0.0)
+        if k < n and raw_len > 0:
+            seg_len = min(raw_len, max(0.0, remaining))
+        else:
+            seg_len = max(0.0, remaining)
+
+        # an Außensegmenten verlängern wir die Länge um genau EINE Randzone (wie die Maßlinie)
         add_off = off if (k == 1 or k == n) else 0.0
-        length_adj = length + add_off
+        length_adj = seg_len + add_off
+
+        # Breite = Grabenbreite + 2*offset (wie die vertikale Maßlinie)
+        width_adj = float(trench_width) + 2.0 * off
+
+        mat = s.get("material", "")
         aufmass.append(
-            f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Material={s.get('material','')}"
+            f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Breite={width_adj} m"
+            + (f"  Material={mat}" if mat else "")
         )
+
+        remaining = max(0.0, remaining - seg_len)
 
 def _get_manual_aufmass_lines(session: dict) -> Optional[list[str]]:
     elems = session.get("elements", [])
@@ -1007,7 +1036,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         } for s in seg_list],
                         add_dims=True,
                     )
-                    _append_surface_segments_aufmass(i+1, seg_list, aufmass)
+                    _append_surface_segments_aufmass(i+1, seg_list, aufmass, L1, B1)
                 else:
                     off = float(seg_list[0].get("offset", 0) or 0)
                     if off:
@@ -1018,8 +1047,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                             offset=off,
                             material_text=f"Oberfläche: {seg_list[0].get('material','')}",
                         )
+                        mat = seg_list[0].get("material","")
+                        len_total = L1 + 2*off
+                        width_total = B1 + 2*off
                         aufmass.append(
-                            f"Oberfläche {i+1}: Randzone={off} m  Material={seg_list[0].get('material','')}"
+                            f"Oberfläche {i+1}: Randzone={off} m  l={len_total} m  b={width_total} m"
+                            + (f"  Material={mat}" if mat else "")
                         )
                 drawn_surface.add(i+1)
 
@@ -1160,14 +1193,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                                "material": s.get("material", "")} for s in seg_list_L],
                     add_dims=True,
                 )
-                _append_surface_segments_aufmass(i+1, seg_list_L, aufmass)
+                _append_surface_segments_aufmass(i+1, seg_list_L, aufmass, L1, B1)
             else:
                 offL = float(seg_list_L[0].get("offset", 0) or 0)
                 if offL:
                     draw_surface_top(msp, trench_top_left=top_left_1,
                                      trench_length=L1, trench_width=B1, offset=offL,
                                      material_text=f"Oberfläche: {seg_list_L[0].get('material','')}")
-                    aufmass.append(f"Oberfläche {i+1}: Randzone={offL} m  Material={seg_list_L[0].get('material','')}")
+                    matL = seg_list_L[0].get("material","")
+                    len_total_L = L1 + 2*offL
+                    width_total_L = B1 + 2*offL
+                    aufmass.append(
+                        f"Oberfläche {i+1}: Randzone={offL} m  länge={len_total_L} m  breite={width_total_L} m"
+                        + (f"  Material={matL}" if matL else "")
+                    )
             drawn_surface.add(i+1)
 
         seg_list_R = _surfaces_for_trench(surfaces, i+2)
@@ -1180,14 +1219,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                                "material": s.get("material", "")} for s in seg_list_R],
                     add_dims=True,
                 )
-                _append_surface_segments_aufmass(i+2, seg_list_R, aufmass)
+                _append_surface_segments_aufmass(i+2, seg_list_R, aufmass, L2, B2)
             else:
                 offR = float(seg_list_R[0].get("offset", 0) or 0)
                 if offR:
                     draw_surface_top(msp, trench_top_left=top_left_2,
                                      trench_length=L2, trench_width=B2, offset=offR,
                                      material_text=f"Oberfläche: {seg_list_R[0].get('material','')}")
-                    aufmass.append(f"Oberfläche {i+2}: Randzone={offR} m  Material={seg_list_R[0].get('material','')}")
+                    matR = seg_list_R[0].get("material","")
+                    len_total_R = L2 + 2*offR
+                    width_total_R = B2 + 2*offR
+                    aufmass.append(
+                        f"Oberfläche {i+2}: Randzone={offR} m  l={len_total_R} m  b={width_total_R} m"
+                        + (f"  Material={matR}" if matR else "")
+                    )
             drawn_surface.add(i+2)
 
         # Draufsichten links/rechts nur einmal je Graben
