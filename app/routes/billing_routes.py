@@ -56,11 +56,12 @@ async def extract_dims_gpt(line: str) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 # ---------- /match-lv ----------
-@router.post("/match-lv/")
+@router.post("/match-lv")
 async def match_lv(req: MatchRequest):
     sess = session_manager.get_session(req.session_id)
     if not sess.get("elements"):
         raise HTTPException(404, "Session unknown oder empty")
+
 
     # Manuellen Override bevorzugen, sonst letzten Auto-Aufmaßblock
     manual = next((e["lines"] for e in reversed(sess["elements"])
