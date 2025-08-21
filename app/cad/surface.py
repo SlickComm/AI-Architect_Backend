@@ -57,12 +57,14 @@ def draw_surface_top(
                         (right, outer_top), (left, outer_top)],
                        close=True, dxfattribs={"layer": LAYER_SURF, "ltscale": SURFACE_LTSCALE})
 
-    # links: vertikal (unverändert)
-    msp.add_linear_dim(
-        base=(left - DIM_OFFSET, outer_top),
-        p1=(left, outer_top), p2=(left, outer_bot),
-        angle=90, override=_dim_override(), dxfattribs={"layer": LAYER_DIM}
-    ).render()
+    # links: vertikal
+    EPS_OFF = 1e-6
+    if offset > EPS_OFF:
+        msp.add_linear_dim(
+            base=(left - DIM_OFFSET, outer_top),
+            p1=(left, outer_top), p2=(left, outer_bot),
+            angle=90, override=_dim_override(), dxfattribs={"layer": LAYER_DIM}
+        ).render()
 
     # oben: Gesamt-Länge ÜBER der Outline
     STACK = 0.35
@@ -83,12 +85,6 @@ def draw_surface_top_segments(
     add_dims: bool = True,
     show_total: bool = False,
 ) -> None:
-    """
-    Draw a dashed outer boundary with offset changing in segments along the length.
-    - If the last (or any) segment has length None/0, it will fill the remaining length.
-    - If total provided length < trench_length, the last offset continues to the end.
-    - If total provided length > trench_length, the last segment is clipped.
-    """
     if not segments:
         return
 
@@ -194,7 +190,11 @@ def draw_surface_top_segments(
         ).render()
 
     # per-segment vertical width dims (showing W + 2*offset)
+    EPS_OFF = 1e-6
     for j, seg in enumerate(norm):
+        if seg["offset"] <= EPS_OFF:
+            continue  # keine Randzone -> keine zusätzliche Vertikalbemaßung
+
         x1 = tlx + boundaries[j]
         x2 = tlx + boundaries[j+1]
         cx = (x1 + x2)/2.0
