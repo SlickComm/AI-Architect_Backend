@@ -78,22 +78,31 @@ def draw_trench_front(
     hatch.paths.add_polyline_path(outer, is_closed=True)
     hatch.paths.add_polyline_path(inner, is_closed=True)
 
-def draw_trench_top(msp, top_left, length, width):
+def draw_trench_top(msp, top_left, length, width, *, clip_left=False, clip_right=False, dim_right=False, ):
     x, y = top_left
-    rect = [(x, y), (x+length, y), (x+length, y+width), (x, y+width)]
-    msp.add_lwpolyline(rect, close=True, dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-    y_top = y + width  
+    # Außenkanten (offen zeichnen, damit wir Einzelkanten weglassen können)
+    msp.add_lwpolyline([(x, y), (x + length, y)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+    msp.add_lwpolyline([(x, y + width), (x + length, y + width)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+    if not clip_left:
+        msp.add_lwpolyline([(x, y), (x, y + width)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+    if not clip_right:
+        msp.add_lwpolyline([(x + length, y), (x + length, y + width)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+    # Bemaßungen wie gehabt
+    y_top = y + width
     msp.add_linear_dim(
-        base=(x, y_top + DIM_OFFSET + TOP_DIM_EXTRA),            
-        p1=(x, y_top), p2=(x + length, y_top),     
-        angle=0,
+        base=(x, y_top + DIM_OFFSET + TOP_DIM_EXTRA),
+        p1=(x, y_top), p2=(x + length, y_top), angle=0,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
 
+    # ← links standard | → rechts, wenn dim_right=True
+    vx = (x + length) if dim_right else x
+    base_x = (vx + DIM_OFFSET) if dim_right else (x - DIM_OFFSET)
     msp.add_linear_dim(
-        base=(x - DIM_OFFSET, y),                  
-        p1=(x, y), p2=(x, y + width), angle=90,
+        base=(base_x, y),
+        p1=(vx, y), p2=(vx, y + width), angle=90,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
 

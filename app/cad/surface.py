@@ -38,6 +38,7 @@ def _dim_override():
     }
 
 # ---------- legacy: one uniform offset ----------
+# NEU: beide APIs mit Clip-Flags
 def draw_surface_top(
     msp,
     trench_top_left: Tuple[float, float],
@@ -45,32 +46,37 @@ def draw_surface_top(
     trench_width: float,
     offset: float,
     material_text: Optional[str] = None,
+    *,                      # <-- nur Keywords
+    clip_left: bool = False,
+    clip_right: bool = False,
 ) -> None:
     tlx, tly = trench_top_left
-    left   = tlx - offset
-    right  = tlx + trench_length + offset
+    left   = tlx if clip_left else tlx - offset
+    right  = (tlx + trench_length) if clip_right else (tlx + trench_length + offset)
     inner_top  = tly + trench_width
-    outer_top  = inner_top + offset         
+    outer_top  = inner_top + offset
     outer_bot  = tly - offset
 
-    msp.add_lwpolyline([(left, outer_bot), (right, outer_bot),
-                        (right, outer_top), (left, outer_top)],
-                       close=True, dxfattribs={"layer": LAYER_SURF, "ltscale": SURFACE_LTSCALE})
+    msp.add_lwpolyline(
+        [(left, outer_bot), (right, outer_bot), (right, outer_top), (left, outer_top)],
+        close=True,
+        dxfattribs={"layer": LAYER_SURF, "ltscale": SURFACE_LTSCALE}
+    )
 
-    # links: vertikal
+    # Vertikalmaß für die Randzone nur am freien linken Ende
     EPS_OFF = 1e-6
-    if offset > EPS_OFF:
+    if offset > EPS_OFF and not clip_left:
         msp.add_linear_dim(
             base=(left - DIM_OFFSET, outer_top),
             p1=(left, outer_top), p2=(left, outer_bot),
             angle=90, override=_dim_override(), dxfattribs={"layer": LAYER_DIM}
         ).render()
 
-    # oben: Gesamt-Länge ÜBER der Outline
+    # Obere Gesamtlänge genau über der geclippten Outline
     STACK = 0.35
     msp.add_linear_dim(
         base=((left + right)/2.0, outer_top + DIM_OFFSET + STACK),
-        p1=(left,  outer_top), p2=(right, outer_top), angle=0,
+        p1=(left, outer_top), p2=(right, outer_top), angle=0,
         override=_dim_override(), dxfattribs={"layer": LAYER_DIM}
     ).render()
 
@@ -84,6 +90,8 @@ def draw_surface_top_segments(
     segments: List[Dict],      # each: {"length": float|None, "offset": float, "material": str?}
     add_dims: bool = True,
     show_total: bool = False,
+    clip_left: bool = False,          # <— NEU
+    clip_right: bool = False,
 ) -> None:
     if not segments:
         return
@@ -126,66 +134,53 @@ def draw_surface_top_segments(
     # TOP path (left -> right)
     pts = []
     off0 = norm[0]["offset"]
-    pts.append((tlx - off0, tly - off0))  # outer top-left
+    x_left_outer = tlx if clip_left else (tlx - off0)
+    pts = [(x_left_outer, tly - off0)]
 
     for j in range(len(norm) - 1):
         x_step = tlx + boundaries[j+1]
         off_j  = norm[j]["offset"]
         off_n  = norm[j+1]["offset"]
-        # horizontal to step position with current offset
         pts.append((x_step, tly - off_j))
-        # vertical step to new offset
         pts.append((x_step, tly - off_n))
 
     off_last = norm[-1]["offset"]
-    pts.append((tlx + L + off_last, tly - off_last))  # outer top-right
+    x_right_outer = (tlx + L) if clip_right else (tlx + L + off_last)
+    pts.append((x_right_outer, tly - off_last))            # outer top-right
+    pts.append((x_right_outer, tly + W + off_last))
 
-    # RIGHT side down
-    pts.append((tlx + L + off_last, tly + W + off_last))
-
-    # BOTTOM path (right -> left)
+    # Untere Steps
     for j in reversed(range(len(norm) - 1)):
         x_step = tlx + boundaries[j+1]
-        off_cur = norm[j+1]["offset"]
-        off_prev = norm[j]["offset"]
-        # horizontal to step position at current offset
+        off_cur = norm[j+1]["offset"]; off_prev = norm[j]["offset"]
         pts.append((x_step, tly + W + off_cur))
-        # vertical step to previous offset
         pts.append((x_step, tly + W + off_prev))
 
-    # LEFT side up (closing)
-    pts.append((tlx - off0, tly + W + off0))
-
-    msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": LAYER_SURF, "ltscale": SURFACE_LTSCALE})
+    pts.append((x_left_outer, tly + W + off0))             # left side up
+    msp.add_lwpolyline(pts, close=True,
+        dxfattribs={"layer": LAYER_SURF, "ltscale": SURFACE_LTSCALE})
 
     if not add_dims:
         return
 
+    # --- Segment-Längen: an Nahtseiten NICHT verlängern ---
     ov = _dim_override()
     max_off = max(s["offset"] for s in norm)
-    outer_top_all = tly + W + max_off
+    y_top_clear = (tly + W + max_off) + DIM_OFFSET + 0.45
 
-    # Abstand der Segment-Maßkette
-    SEG_DIM_EXTRA = 0.45
-    y_top_clear = outer_top_all + DIM_OFFSET + SEG_DIM_EXTRA
-
-    EDGE_OFFSET_FACTOR = 1  # halbe Randzone an den äußeren Enden einbeziehen
+    EDGE_EXT_L = 0.0 if clip_left  else 1.0   # vorher 1
+    EDGE_EXT_R = 0.0 if clip_right else 1.0
 
     for j, seg in enumerate(norm):
-        # innere Segmentgrenzen (ohne Randzone)
         x1 = tlx + boundaries[j]
         x2 = tlx + boundaries[j+1]
-
-        # >>> nur äußerste Segmente an den Enden verlängern
         if j == 0:
-            x1 -= seg["offset"] * EDGE_OFFSET_FACTOR      # links um halbe Randzone erweitern
+            x1 -= seg["offset"] * EDGE_EXT_L
         if j == len(norm) - 1:
-            x2 += seg["offset"] * EDGE_OFFSET_FACTOR      # rechts um halbe Randzone erweitern
-
-        y_ref = tly + W + seg["offset"]                   # Oberkante der jeweiligen Oberfläche
+            x2 += seg["offset"] * EDGE_EXT_R
+        y_ref = tly + W + seg["offset"]
         msp.add_linear_dim(
-            base=((x1 + x2) / 2.0, y_top_clear),
-            p1=(x1, y_ref), p2=(x2, y_ref), angle=0,
+            base=((x1 + x2)/2.0, y_top_clear), p1=(x1, y_ref), p2=(x2, y_ref), angle=0,
             override=ov, dxfattribs={"layer": LAYER_DIM}
         ).render()
 

@@ -10,12 +10,13 @@ import os
 import uuid, pathlib
 import json
 
+from openai import AsyncOpenAI
+
 from app.utils.session_manager import session_manager
 from app.services.lv_matcher     import best_matches_batch, parse_aufmass
 from app.invoices.builder       import make_invoice
 from app.services.lv_loader import load_lv
-
-from openai import AsyncOpenAI
+from app.services.lv_matcher import best_matches_batch, parse_aufmass, _classify_line
 
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
@@ -65,70 +66,74 @@ async def match_lv(req: MatchRequest):
 
     # Manuellen Override bevorzugen, sonst letzten Auto-Aufmaßblock
     manual = next((e["lines"] for e in reversed(sess["elements"])
-                   if e.get("type") == "aufmass_override"), None)
+                if e.get("type") == "aufmass_override"), None)
     if manual:
-        lines = [l for l in manual if l.strip()]
+        lines_full = [l for l in manual if l.strip()]          # volle Zeilen
     else:
         texts = [e["text"] for e in sess["elements"] if e.get("type") == "aufmass"]
         if not texts:
             raise HTTPException(400, "Aufmaß fehlt – zuerst DXF erstellen")
-        lines = parse_aufmass(texts[-1])
+        lines_full = _split_full_lines(texts[-1])              # volle Zeilen
 
-    # ---------- NEU: zuerst harte Links aus der Session anwenden ----------
-    # (Hash über die exakte Aufmaßzeile → LV-Code)
+    # für Backward-Compat: Hash-Key = Teil NACH dem Doppelpunkt
+    lines_key = [_after_colon(l) for l in lines_full]
+
+    # --- harte Links (weiterhin über den "key")
     links = sess.get("lv_links", {})
     lv_items = load_lv()
     by_code  = {x["code"]: x for x in lv_items}
-
     hard_assigned: dict[int, dict] = {}
-    for i, line in enumerate(lines):
-        h = sha1(line.strip().encode("utf-8")).hexdigest()
+    for i, key in enumerate(lines_key):
+        h = sha1(key.strip().encode("utf-8")).hexdigest()
         code = links.get(h)
         if code and code in by_code:
             hard_assigned[i] = by_code[code]
 
-    # Nur die noch nicht verlinkten Zeilen von GPT matchen lassen
-    to_match_idx = [i for i in range(len(lines)) if i not in hard_assigned]
-    to_match     = [lines[i] for i in to_match_idx]
-    results      = await best_matches_batch(to_match)
+    # --- Hints (aus der VOLLEN Zeile! bessere Klassifizierung)
+    all_hints, all_dims = [], []
+    for line_full in lines_full:
+        d = await extract_dims_gpt(line_full)  # mehr Kontext → robuster
+        all_dims.append(d)
+        all_hints.append({
+            "kind": _classify_line(line_full),             # sieht "Baugraben", "Durchstich", …
+            "dims": {"L": d.get("L"), "B": d.get("B"), "T": d.get("T")},
+        })
+
+    # Nur nicht-verlinkte matchen – aber mit der VOLLEN Zeile!
+    to_match_idx = [i for i in range(len(lines_full)) if i not in hard_assigned]
+    to_match     = [lines_full[i] for i in to_match_idx]      # <— wichtig
+    to_hints     = [all_hints[i]   for i in to_match_idx]
+    results      = await best_matches_batch(to_match, to_hints)
     res_by_idx   = {i: r for i, r in zip(to_match_idx, results)}
-    # ----------------------------------------------------------------------
 
     assigned, to_review = [], []
-
-    # Beim Zusammenbauen: für jede Zeile ggf. harten Link nutzen
-    for idx, line in enumerate(lines):
-        # Maße (L,B,T, qty) immer extrahieren – auch bei hartem Link
-        dims = await extract_dims_gpt(line)
+    for idx, line_full in enumerate(lines_full):
+        dims = all_dims[idx]
         base = {
-            "aufmass":      line,
-            "L":            dims.get("L", 0),
-            "B":            dims.get("B", 0),
-            "T":            dims.get("T", 0),
-            "qty":          dims.get("L", 0),
-            "confidence":   1.0,          # Default – wird ggf. überschrieben
+            "aufmass":    line_full,        # <— jetzt voller Text
+            "L":          dims.get("L", 0),
+            "B":          dims.get("B", 0),
+            "T":          dims.get("T", 0),
+            "qty":        dims.get("L", 0),
+            "confidence": 1.0,
             "alternatives": [],
         }
 
         if idx in hard_assigned:
             base["match"] = hard_assigned[idx]
-            assigned.append(base)         # feste Verknüpfung → direkt „assigned“
+            assigned.append(base)
             continue
 
         res = res_by_idx[idx]
         base["confidence"]   = res["confidence"]
         base["alternatives"] = res["alternatives"]
-
         if res["confidence"] >= CONFIDENCE_THRESHOLD:
             base["match"] = res["match"]
             assigned.append(base)
         else:
             to_review.append(base)
 
-    return {
-        "assigned":  assigned,
-        "to_review": to_review
-    }
+    return {"assigned": assigned, "to_review": to_review}
 
 # ---------- /invoice ----------
 @router.post("/invoice")
@@ -139,3 +144,12 @@ def build_invoice(req: InvoiceRequest):
     return FileResponse(pdf,
                         media_type="application/pdf",
                         filename="Rechnung.pdf")
+
+# --- helper: split full lines & derive a "key" without prefix --------------
+def _split_full_lines(block: str) -> list[str]:
+    return [ln.strip() for ln in block.replace("\r","\n").split("\n")
+            if ln.strip() and not ln.strip().lower().startswith("aufmaß")]
+
+def _after_colon(s: str) -> str:
+    m = re.search(r":\s*(.*)$", s)
+    return m.group(1) if m else s

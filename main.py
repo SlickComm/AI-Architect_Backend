@@ -321,40 +321,31 @@ def _append_surface_segments_aufmass(
     seg_list: list[dict],
     aufmass: list[str],
     trench_length: float,
-    trench_width: float
+    trench_width: float,
+    *,                         # ab hier nur Keyword-Args
+    left_free: bool = True,    # außen links frei? (Randzone zur Länge addieren)
+    right_free: bool = True,   # außen rechts frei?
 ) -> None:
-    """
-    Schreibt für jede Oberflächen-Stufe eine Aufmaßzeile:
-    - Länge je Segment (bei erstem/letztem Segment mit Randzonen-Verlängerung wie in der Bemaßung),
-    - Breite = Grabenbreite + 2*offset,
-    - Material optional.
-    """
     n = len(seg_list)
     remaining = float(trench_length)
-
     for k, s in enumerate(seg_list, start=1):
         off = float(s.get("offset", 0) or 0.0)
-
-        # Segmentlänge robust: fehlende/0-Längen beim letzten Segment = Restlänge
         raw_len = float(s.get("length", 0) or 0.0)
         if k < n and raw_len > 0:
             seg_len = min(raw_len, max(0.0, remaining))
         else:
             seg_len = max(0.0, remaining)
 
-        # an Außensegmenten verlängern wir die Länge um genau EINE Randzone (wie die Maßlinie)
-        add_off = off if (k == 1 or k == n) else 0.0
-        length_adj = seg_len + add_off
+        add_left  = off if (k == 1 and left_free)  else 0.0
+        add_right = off if (k == n and right_free) else 0.0
+        length_adj = seg_len + add_left + add_right
 
-        # Breite = Grabenbreite + 2*offset (wie die vertikale Maßlinie)
         width_adj = float(trench_width) + 2.0 * off
-
         mat = s.get("material", "")
         aufmass.append(
             f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Breite={width_adj} m"
             + (f"  Material={mat}" if mat else "")
         )
-
         remaining = max(0.0, remaining - seg_len)
 
 def _get_manual_aufmass_lines(session: dict) -> Optional[list[str]]:
@@ -878,6 +869,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     doc.header["$LTSCALE"]  = 1.0
     doc.header["$CELTSCALE"] = 1.0
     doc.header["$PSLTSCALE"] = 0
+    doc.header["$PLINEGEN"] = 1.0
 
     # ---------- Elemente vorsortieren ----------
     trenches, pipes, surfaces, passes, joins = [], [], [], [], []
@@ -886,7 +878,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if "baugraben"           in t: trenches.append(el)
         elif "rohr"              in t: pipes.append(el)
         elif "oberflächenbefest" in t: surfaces.append(el)
-        elif "durchstich" in t:          passes.append(el)
         elif "durchstich"        in t: passes.append(el)
         elif "verbindung"        in t: joins.append(el)
 
@@ -959,6 +950,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             mat = surf.get("material", "")
             aufmass.append(f"Oberfläche {idx}: Randzone={off} m  Material={mat}")
     
+    # Hilfsfunktion am Anfang von _generate_dxf_intern definieren (oder lokal im Block):
+    def _is_join_only(seam_idx: int) -> bool:
+        # True, wenn an Naht seam_idx nur "Verbindung" existiert (kein Durchstich)
+        return (seam_idx in join_set) and (_pass_for_between(passes, seam_idx) is None)
+
     # --- Neu: Positions- & Duplikat-Tracking ---
     trench_origin_x: dict[int, float] = {}  # 0-basierter Index -> Außen-Links-X in der Vorderansicht
     drawn_top: set[int] = set()             # 1-basierte Indizes: Draufsicht schon gezeichnet?
@@ -1003,7 +999,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
             # Draufsicht nur einmal je Graben
             if (i+1) not in drawn_top:
-                draw_trench_top(msp, (x_start+CLR_LR, Y_TOP), length=L1, width=B1)
+                draw_trench_top(
+                    msp, (x_start+CLR_LR, Y_TOP),
+                    length=L1, width=B1,
+                    dim_right=(i + 1 == len(trenches))   # <— nur beim letzten BG
+                )
                 drawn_top.add(i+1)
 
             # optional Rohr nur einmal je Graben
@@ -1108,6 +1108,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         x_inner_right = x_inner_left + L1 + p_w + L2
         y_inner_bot   = CLR_BOT
 
+        # Flags: ob links/rechts nur eine "Verbindung" (ohne Durchstich) anliegt
+        join_L = _is_join_only(i) if i > 0 else False
+        join_M = True                    # zwischen i und i+1 gibt es auf jeden Fall eine Naht
+        join_R = _is_join_only(i + 2) if (i + 2) < len(trenches) else False
+
         DIM_OVERRIDE = {
             "dimtxt": DIM_TXT_H,
             "dimclrd": 3,
@@ -1140,9 +1145,22 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         xStep = xSeamInner
 
         if join_only:
-            msp.add_lwpolyline([(xL,   yTopL), (xStep, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            msp.add_lwpolyline([(xR,   yTopR), (xStep, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            msp.add_lwpolyline([(xStep, yTopR), (xStep, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            EPS = 1e-4
+
+            # Draufsicht: senkrechte Naht an der Fuge
+            x_seam = x_start + left_clear + L1
+            y_top_L = Y_TOP + B1
+            y_top_R = Y_TOP + B2
+            msp.add_lwpolyline(
+                [(x_seam, min(y_top_L, y_top_R) - EPS),
+                (x_seam, max(y_top_L, y_top_R) + EPS)],
+                dxfattribs={"layer": LAYER_TRENCH_OUT}
+            )
+
+            # Vorderansicht: obere Außenkontur + Stufe an der Naht
+            msp.add_lwpolyline([(xL,   yTopL),           (xStep + EPS, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xR,   yTopR),           (xStep - EPS, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xStep, yTopR - EPS),    (xStep,      yTopL + EPS)], dxfattribs={"layer": LAYER_TRENCH_OUT})
         else:
             add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
             add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
@@ -1187,19 +1205,33 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if seg_list_L and (i+1) not in drawn_surface:
             if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_L):
                 draw_surface_top_segments(
-                    msp, trench_top_left=top_left_1, trench_length=L1, trench_width=B1,
+                    msp,
+                    trench_top_left=top_left_1,
+                    trench_length=L1, trench_width=B1,
                     segments=[{"length": float(s.get("length", 0) or 0),
-                               "offset": float(s.get("offset", 0) or 0),
-                               "material": s.get("material", "")} for s in seg_list_L],
+                            "offset": float(s.get("offset", 0) or 0),
+                            "material": s.get("material", "")} for s in seg_list_L],
                     add_dims=True,
+                    # >>> Nur bei reiner Verbindung clippen:
+                    clip_left=(join_L and join_only),
+                    clip_right=(join_M and join_only),
                 )
-                _append_surface_segments_aufmass(i+1, seg_list_L, aufmass, L1, B1)
+                _append_surface_segments_aufmass(
+                    i+1, seg_list_L, aufmass, L1, B1,
+                    left_free=not join_L, right_free=False
+                )
             else:
                 offL = float(seg_list_L[0].get("offset", 0) or 0)
                 if offL:
-                    draw_surface_top(msp, trench_top_left=top_left_1,
-                                     trench_length=L1, trench_width=B1, offset=offL,
-                                     material_text=f"Oberfläche: {seg_list_L[0].get('material','')}")
+                    draw_surface_top(
+                        msp,
+                        trench_top_left=top_left_1,
+                        trench_length=L1, trench_width=B1,
+                        offset=offL,
+                        clip_left=(join_L and join_only),
+                        clip_right=(join_M and join_only),
+                        material_text=f"Oberfläche: {seg_list_L[0].get('material','')}",
+                    )
                     matL = seg_list_L[0].get("material","")
                     len_total_L = L1 + 2*offL
                     width_total_L = B1 + 2*offL
@@ -1213,19 +1245,33 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if seg_list_R and (i+2) not in drawn_surface:
             if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_R):
                 draw_surface_top_segments(
-                    msp, trench_top_left=top_left_2, trench_length=L2, trench_width=B2,
+                    msp,
+                    trench_top_left=top_left_2,
+                    trench_length=L2, trench_width=B2,
                     segments=[{"length": float(s.get("length", 0) or 0),
-                               "offset": float(s.get("offset", 0) or 0),
-                               "material": s.get("material", "")} for s in seg_list_R],
+                            "offset": float(s.get("offset", 0) or 0),
+                            "material": s.get("material", "")} for s in seg_list_R],
                     add_dims=True,
+                    # >>> Nur bei reiner Verbindung clippen:
+                    clip_left=(join_M and join_only),
+                    clip_right=(join_R and join_only),
                 )
-                _append_surface_segments_aufmass(i+2, seg_list_R, aufmass, L2, B2)
+                _append_surface_segments_aufmass(
+                    i+2, seg_list_R, aufmass, L2, B2,
+                    left_free=False, right_free=not join_R
+                )
             else:
                 offR = float(seg_list_R[0].get("offset", 0) or 0)
                 if offR:
-                    draw_surface_top(msp, trench_top_left=top_left_2,
-                                     trench_length=L2, trench_width=B2, offset=offR,
-                                     material_text=f"Oberfläche: {seg_list_R[0].get('material','')}")
+                    draw_surface_top(
+                        msp,
+                        trench_top_left=top_left_2,
+                        trench_length=L2, trench_width=B2,
+                        offset=offR,
+                        clip_left=(join_M and join_only),
+                        clip_right=(join_R and join_only),
+                        material_text=f"Oberfläche: {seg_list_R[0].get('material','')}",
+                    )
                     matR = seg_list_R[0].get("material","")
                     len_total_R = L2 + 2*offR
                     width_total_R = B2 + 2*offR
@@ -1235,13 +1281,25 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     )
             drawn_surface.add(i+2)
 
-        # Draufsichten links/rechts nur einmal je Graben
-        if (i+1) not in drawn_top:
-            draw_trench_top(msp, top_left_1, length=L1, width=B1)
-            drawn_top.add(i+1)
-        if (i+2) not in drawn_top:
-            draw_trench_top(msp, top_left_2, length=L2, width=B2)
-            drawn_top.add(i+2)
+        # links (i+1)
+        if (i + 1) not in drawn_top:
+            draw_trench_top(
+                msp, top_left_1, length=L1, width=B1,
+                clip_left=(join_L and join_only),
+                clip_right=(join_M and join_only),
+                dim_right=False
+            )
+            drawn_top.add(i + 1)
+
+        # rechts (i+2)
+        if (i + 2) not in drawn_top:
+            draw_trench_top(
+                msp, top_left_2, length=L2, width=B2,
+                clip_left=(join_M and join_only),
+                clip_right=(join_R and join_only),
+                dim_right=(i + 2 == len(trenches))  
+            )
+            drawn_top.add(i + 2)
 
         # --- Rohr über den gesamten Cluster ziehen (nur am linken Cluster-Anfang) ---
         if not has_pass_left:
@@ -1550,25 +1608,27 @@ ZIEL
 • Bestimme, welches Objekt (oder welche Menge) zu löschen ist.
 • Nutze Synonyme: „BG“/„Graben“ → Baugraben, „Druckrohr“/„Leitung“ → Rohr,
   „Oberfläche“/„Pflaster“/„Gehwegplatten“ → Oberflächenbefestigung.
+  „Verbindung/verbinde/Verbund/connect“ → Verbindung.
 
 ADRESSIERUNG
 • "Baugraben N"             → selection.trench_index = N
 • "Rohr im/zu BG N"         → selection.for_trench = N
 • "Oberfläche in BG N"      → selection.for_trench = N, optional selection.seq = M
 • "Durchstich zw. BG N & N+1" → selection.between = N
+• "Verbindung zw. BG N & N+1" → selection.type = "Verbindung", selection.between = N
 • Wenn kein Index genannt und genau EIN passendes Objekt existiert → dieses.
 • Wenn mehrere existieren und kein Index → das zuletzt angelegte (Fallback).
 
 MODUS
 • Wenn der Text eindeutig „alle“, „sämtliche“, „komplett“ enthält
-  (z. B. „Lösche alle Oberflächen in BG 2“, „Entferne alle Durchstiche“),
+  (z. B. „Lösche alle Oberflächen in BG 2“, „Entferne alle Durchstiche“, „Lösche alle Verbindungen“),
   setze "mode": "bulk".
 • Sonst "mode": "single".
 
 ANTWORTFORMAT (exakt so!):
 {{
   "selection": {{
-    "type": "Baugraben | Rohr | Oberflächenbefestigung | Durchstich",
+    "type": "Baugraben | Rohr | Oberflächenbefestigung | Durchstich | Verbindung",
     "trench_index": 0,
     "for_trench": 0,
     "seq": 0,

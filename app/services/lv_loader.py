@@ -30,14 +30,30 @@ def _normalize_item(it: Dict[str, Any], *, catalog: str) -> Dict[str, Any]:
     T1  = str(it.get("T1", "")).strip()
     T2  = str(it.get("T2", "")).strip()
     Pos = str(it.get("Pos","")).strip()
+
+    # Basis
     out = {
-        "T1": T1, "T2": T2, "Pos": Pos,
+        "T1": T1,
+        "T2": T2,
+        "Pos": Pos,
         "description": it.get("description") or it.get("Beschreibung") or it.get("text") or "",
         "price": it.get("price") or it.get("Einheitspreis") or None,
         "unit": it.get("unit") or it.get("Einheit") or None,
-        "catalog": catalog,                              # ── NEW
+        "catalog": catalog,
     }
+
+    # >>> NEU: sinnvolle Zusatzfelder unverändert übernehmen
+    for k in ("sub", "dn", "category", "aushubbreite", "rohrgrabentiefe_m"):
+        if k in it:
+            out[k] = it[k]
+
+    # Bestehende 'code' Semantik beibehalten (kompatibel zu lv_links usw.)
     out["code"] = f"{T1}.{T2}.{Pos}"
+
+    # >>> Optional: voller Code inkl. sub (für UI)
+    if out.get("sub"):
+        out["code_with_sub"] = f"{out['code']}{out['sub']}"
+
     return out
 
 @lru_cache(maxsize=1)
