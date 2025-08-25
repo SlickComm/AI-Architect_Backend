@@ -34,49 +34,64 @@ def draw_trench_front(
     depth:  float,
     clearance_left: float = 0.2,
     clearance_bottom: float = 0.2,
+    *,
+    depth_left: Optional[float] = None,
+    depth_right: Optional[float] = None,
 ) -> None:
-    """Äußeres + inneres Rechteck (Front), Bemaßung, Schraffur."""
     ox, oy = origin
+    dL = depth if depth_left  is None else float(depth_left)
+    dR = depth if depth_right is None else float(depth_right)
+    dMAX = max(dL, dR, depth)
 
-    # äußeres Rechteck
+    # inneres Trapez (mit Gefälle)
+    x0 = ox + clearance_left
+    yb = oy + clearance_bottom
+    x1 = x0 + length
+    y_top = yb + dMAX              # Decke = waagrecht
+
+    yBL = y_top - dL           # Innenboden links
+    yBR = y_top - dR           # Innenboden rechts
+    yOBL = yBL - clearance_bottom   # Außenboden links
+    yOBR = yBR - clearance_bottom   # Außenboden rechts
+
+    EPS = 1e-6  # 1 µm reicht; nur top-Kante entkoppeln
+
+    inner = [(x0, yBL), (x1, yBR), (x1, y_top - EPS), (x0, y_top - EPS)]
+    msp.add_lwpolyline(inner, close=True, dxfattribs={"layer": LAYER_TRENCH_IN})
+
     outer = [
-        (ox, oy),
-        (ox + length + 2 * clearance_left, oy),
-        (ox + length + 2 * clearance_left, oy + depth + clearance_bottom),
-        (ox, oy + depth + clearance_bottom),
+        (ox,                             yOBL),
+        (ox + length + 2*clearance_left, yOBR),
+        (ox + length + 2*clearance_left, y_top),
+        (ox,                             y_top),
     ]
-    msp.add_lwpolyline(outer, close=True,
-                       dxfattribs={"layer": LAYER_TRENCH_OUT})
+    msp.add_lwpolyline(outer, close=True, dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-    # inneres Rechteck
-    inner = [
-        (ox + clearance_left,                   oy + clearance_bottom),
-        (ox + clearance_left + length,          oy + clearance_bottom),
-        (ox + clearance_left + length,          oy + clearance_bottom + depth),
-        (ox + clearance_left,                   oy + clearance_bottom + depth),
-    ]
-    msp.add_lwpolyline(inner, close=True,
-                       dxfattribs={"layer": LAYER_TRENCH_IN})
-
-    # Bemaßung
-    dim = msp.add_linear_dim
-    dim(
-        base=(inner[0][0], inner[0][1] - DIM_OFFSET_FRONT),
-        p1=inner[0], p2=inner[1], angle=0,
-        override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
-    ).render()
-    dim(
-        base=(inner[1][0] + DIM_OFFSET_FRONT, inner[1][1]),
-        p1=inner[2], p2=inner[1], angle=90,
+    # Längenmaß (unten)
+    msp.add_linear_dim(
+        base=(x0, yb - DIM_OFFSET_FRONT),
+        p1=(x0, yb), p2=(x1, yb), angle=0,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
 
-    # Schraffur
+    # Längenmaß bleibt, Tiefenmaße von Decke nach unten:
+    msp.add_linear_dim(  # links
+        base=(x0 - DIM_OFFSET_FRONT, yb),
+        p1=(x0, y_top), p2=(x0, yBL), angle=90,
+        override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
+    ).render()
+    msp.add_linear_dim(  # rechts
+        base=(x1 + DIM_OFFSET_FRONT, yb),
+        p1=(x1, y_top), p2=(x1, yBR), angle=90,
+        override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
+    ).render()
+
+    # Schraffur = outer - inner
     hatch = msp.add_hatch(color=4, dxfattribs={"layer": LAYER_HATCH})
     hatch.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE,
-                        angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
-    hatch.paths.add_polyline_path(outer, is_closed=True)
-    hatch.paths.add_polyline_path(inner, is_closed=True)
+                           angle=45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0)
+    hatch.paths.add_polyline_path(outer, is_closed=True) 
+    hatch.paths.add_polyline_path(inner, is_closed=True) 
 
 def draw_trench_top(msp, top_left, length, width, *, clip_left=False, clip_right=False, dim_right=False, ):
     x, y = top_left
@@ -108,35 +123,53 @@ def draw_trench_top(msp, top_left, length, width, *, clip_left=False, clip_right
 
 def draw_trench_front_lr(
     msp, origin: Tuple[float, float], length: float, depth: float, *,
-    clear_left: float = 0.2, 
-    clear_right: float = 0.2, 
-    clear_bottom: float = 0.2,
-    bottom_clip_left: float = 0.0, 
-    top_clip_left: float = 0.0,
-    top_len_from_left: Optional[float] = None, 
-    vertical_clip_right: float = 0.0,
-    draw_left_inner: bool = True,
-    draw_right_inner: bool = True, 
-    draw_outer: bool = True,
-    gap_top_from_left: Optional[float] = None, 
-    gap_top_len:       Optional[float] = None,   
-    gap_bot_from_left: Optional[float] = None,    
-    gap_bot_len:       Optional[float] = None,    
+    clear_left: float = 0.2, clear_right: float = 0.2, clear_bottom: float = 0.2,
+    bottom_clip_left: float = 0.0, top_clip_left: float = 0.0,
+    top_len_from_left: Optional[float] = None, vertical_clip_right: float = 0.0,
+    draw_left_inner: bool = True, draw_right_inner: bool = True, draw_outer: bool = True,
+    gap_top_from_left: Optional[float] = None, gap_top_len: Optional[float] = None,
+    gap_bot_from_left: Optional[float] = None, gap_bot_len: Optional[float] = None,
+    depth_left: Optional[float] = None, depth_right: Optional[float] = None,
 ):
     ox, oy = origin
-    y_bot = oy + clear_bottom
-    y_top = y_bot + depth
+    yb   = oy + clear_bottom
+    dL   = depth if depth_left  is None else float(depth_left)
+    dR   = depth if depth_right is None else float(depth_right)
 
-    def _hline(x1, x2, y):
+    x0 = ox + clear_left
+    xR = x0 + length
+
+    # Decke oben: fest
+    y_top = yb + max(depth, dL, dR)
+    # Boden links/rechts: schräg
+    yBL   = y_top - dL
+    yBR   = y_top - dR
+
+    def _hline(x1, x2, y):  # Boden (wie gehabt)
         if x2 - x1 > 1e-9:
             msp.add_lwpolyline([(x1, y), (x2, y)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
+    def _sline(xa, ya, xb, yb_):
+        if xb - xa > 1e-9:
+            msp.add_lwpolyline([(xa, ya), (xb, yb_)], dxfattribs={"layer": LAYER_TRENCH_IN})
+
+    def y_at(x):
+        # Boden-Schräge zwischen (x0,yBL) und (xR,yBR)
+        if length <= 1e-9: return yBL
+        t = (x - x0) / length
+        return yBL + t * (yBR - yBL)
+
     if draw_outer:
+        y_top = yb + max(depth, dL, dR)
+        yBL   = y_top - dL
+        yBR   = y_top - dR
+        yOBL  = yBL - clear_bottom
+        yOBR  = yBR - clear_bottom
         outer = [
-            (ox, oy),
-            (ox + clear_left + length + clear_right, oy),
-            (ox + clear_left + length + clear_right, oy + depth + clear_bottom),
-            (ox, oy + depth + clear_bottom),
+            (ox,                               yOBL),
+            (ox + clear_left + length + clear_right, yOBR),
+            (ox + clear_left + length + clear_right, y_top),
+            (ox,                               y_top),
         ]
         msp.add_lwpolyline(outer, close=True, dxfattribs={"layer": LAYER_TRENCH_OUT})
 
@@ -147,33 +180,50 @@ def draw_trench_front_lr(
 
         # ── Boden (mit optionaler Lücke)
         if gap_bot_from_left is None or gap_bot_len is None:
-            _hline(x_lft, x_rgt, y_bot)
+            _hline(x_lft, x_rgt, yb)
         else:
             g0 = x0 + max(0.0, gap_bot_from_left)
             g1 = x0 + min(length, gap_bot_from_left + gap_bot_len)
-            _hline(x_lft, min(x_rgt, g0), y_bot)
-            _hline(max(x_lft, g1), x_rgt, y_bot)
+            _hline(x_lft, min(x_rgt, g0), yb)
+            _hline(max(x_lft, g1), x_rgt, yb)
             
-        # linke Innenwand
+        # Vertikale Innenlinien
         if draw_left_inner:
-            msp.add_lwpolyline([(x0, y_bot), (x0, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
-
-        # rechte Innenwand – nur falls gewünscht
+            msp.add_lwpolyline([(x0, yBL), (x0, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
         if draw_right_inner:
-            y_stop = y_bot if vertical_clip_right <= 0 else max(y_bot, y_top - vertical_clip_right)
-            msp.add_lwpolyline([(x_rgt, y_stop), (x_rgt, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
+            y_start = yBR
+            if vertical_clip_right > 0:
+                y_start = max(yb, y_start)           # Clip von unten
+            msp.add_lwpolyline([(xR, y_start), (xR, y_top)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
-        # ── Decke (mit optionaler Lücke)
-        x_start = x0 + top_clip_left
-        x_end   = x_rgt if top_len_from_left is None else min(x_rgt, x0 + top_len_from_left)
-        if x_end > x_start:
-            if gap_top_from_left is None or gap_top_len is None:
-                _hline(x_start, x_end, y_top)
-            else:
-                g0 = x0 + max(0.0, gap_top_from_left)
-                g1 = x0 + min(length, gap_top_from_left + gap_top_len)
-                _hline(x_start, min(x_end, g0), y_top)
-                _hline(max(x_start, g1), x_end, y_top)
+        # Decke (waagrecht) – ggf. mit Lücke oben:
+        x_start_top = x0 + top_clip_left
+        x_end_top   = xR if top_len_from_left is None else min(xR, x0 + top_len_from_left)
+        def _hline(x1, x2, y):
+            if x2 - x1 > 1e-9:
+                msp.add_lwpolyline([(x1, y), (x2, y)], dxfattribs={"layer": LAYER_TRENCH_IN})
+
+        if gap_top_from_left is None or gap_top_len is None:
+            _hline(x_start_top, x_end_top, y_top)
+        else:
+            g0 = x0 + max(0.0, gap_top_from_left)
+            g1 = x0 + min(length, gap_top_from_left + gap_top_len)
+            _hline(x_start_top, min(x_end_top, g0), y_top)
+            _hline(max(x_start_top, g1), x_end_top, y_top)
+
+        # Boden (schräg) – ohne Lücke, oder optional mit gap_bot_* wenn gebraucht:
+        x_start_bot = x0  # ggf. analog zu top_clip_left umbenutzen/verwenden
+        x_end_bot   = xR
+        if gap_bot_from_left is None or gap_bot_len is None:
+            msp.add_lwpolyline([(x_start_bot, y_at(x_start_bot)), (x_end_bot, y_at(x_end_bot))],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
+        else:
+            gb0 = x0 + max(0.0, gap_bot_from_left)
+            gb1 = x0 + min(length, gap_bot_from_left + gap_bot_len)
+            msp.add_lwpolyline([(x_start_bot, y_at(x_start_bot)), (min(x_end_bot, gb0), y_at(min(x_end_bot, gb0)))],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
+            msp.add_lwpolyline([(max(x_start_bot, gb1), y_at(max(x_start_bot, gb1))), (x_end_bot, y_at(x_end_bot))],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
 
 # ---------- Hilfs-Style ----------
 def _dim_style():

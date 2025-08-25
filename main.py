@@ -343,7 +343,7 @@ def _append_surface_segments_aufmass(
         width_adj = float(trench_width) + 2.0 * off
         mat = s.get("material", "")
         aufmass.append(
-            f"Oberfläche {trench_no}.{k}: Randzone={off} m  Länge={length_adj} m  Breite={width_adj} m"
+            f"Oberfläche {trench_no}.{k}: Randzone={off} m  l={length_adj} m  b={width_adj} m"
             + (f"  Material={mat}" if mat else "")
         )
         remaining = max(0.0, remaining - seg_len)
@@ -540,6 +540,36 @@ def _build_edit_context(session: dict) -> str:
 # -----------------------------------------------------
 
 # -----------------------------------------------------
+# START HELPER GEFÄLLE
+# -----------------------------------------------------
+_ALLOWED_EDIT_FIELDS = {
+  "length","width","depth","diameter","material","offset","pattern",
+  "depth_left","depth_right",
+}
+
+FIELD_ALIASES.update({
+  # Gefälle links/rechts
+  "tl":"depth_left","t_l":"depth_left","tiefe_links":"depth_left","tlinks":"depth_left",
+  "tr":"depth_right","t_r":"depth_right","tiefe_rechts":"depth_right","trechts":"depth_right",
+})
+
+def _coerce_updates(upd: dict) -> dict:
+    out = {}
+    for k, v in (upd or {}).items():
+        key = FIELD_ALIASES.get(_norm_text(k), k)
+        if key in {"length","width","depth","diameter","offset","depth_left","depth_right"}:
+            mv = _num_to_meters(v)
+            if mv is not None:
+                out[key] = mv
+        elif key in {"material","pattern"}:
+            out[key] = str(v)
+    return out
+
+# -----------------------------------------------------
+# END HELPER GEFÄLLE
+# -----------------------------------------------------
+
+# -----------------------------------------------------
 # 1) START SESSION
 # -----------------------------------------------------
 @app.post("/start-session")
@@ -620,6 +650,11 @@ GRUNDREGELN
 ● Füge keine Oberflächen­befestigung hinzu, außer der Nutzer fordert
   es ausdrücklich (Stichwortliste: „Oberflächenbefestigung“, „Gehwegplatten“,
   „Mosaikpflaster“, „Verbundpflaster“).
+● Maße können mit „x“, „×“, „*“ oder „·“ getrennt sein (z. B. 6×0,9×1,10 m).
+● Wenn nur zwei Maße genannt sind (z. B. „10×1,0 m“), interpretiere sie als length×width.
+  Die Tiefe kommt dann aus „Tiefe …“/„links … rechts …“. Du MUSST im JSON immer auch
+  das Feld "depth" setzen: depth = max(depth_left, depth_right).
+
 
 REFERENZIERUNG (sehr wichtig)
 • "trench_index" NUR bei type == "Baugraben".
@@ -700,6 +735,16 @@ VERBINDUNG OHNE DURCHSTICH
 • Verbindungen erzeugen KEINE Aufmaß-Zeilen.
 
 ────────────────────────────────────────────
+GEFÄLLE (optional)
+────────────────────────────────────────────
+• Für Baugräben dürfen zusätzlich "depth_left" und "depth_right" gesetzt werden.
+• Wenn nur "depth" angegeben ist → beide Seiten gleich.
+• Wenn depth_left/right gesetzt sind, MUSS "depth" = max(depth_left, depth_right) im Objekt stehen.
+Beispiel:
+  „Baugraben 5x5m, Tiefe links 1,10 m, rechts 1,03 m“
+→ {{ "type":"Baugraben","length":5,"width":5,"depth_left":1.10,"depth_right":1.03,"depth":1.10 }}
+
+────────────────────────────────────────────
 MEHRERE OBJEKTE IN EINEM SATZ
 ────────────────────────────────────────────
 ①  **Stückzahl +x*y*zm**  
@@ -754,9 +799,12 @@ Wir arbeiten mit diesem JSON-Schema, wobei bei
       "trench_index": 0, # NUR bei Baugraben
       "for_trench": 0,   # NUR bei Nicht-Baugraben (1-basiger Verweis)
       "seq": 0,          # optional: laufende Nummer innerhalb desselben Typs
+      
       "length": 0.0,
       "width":  0.0,
       "depth":  0.0,
+      "depth_left":  0.0,      // optional für Gefälle
+      "depth_right": 0.0,      // optional für Gefälle
       "diameter": 0.0,
 
       "material": "",
@@ -896,9 +944,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     TOP_SHIFT = 1.50    # Abstand Draufsicht → Vorderansicht
     PASS_BOTTOM_GAP = 0.5
 
-    MAX_DEPTH = max(float(t["depth"]) for t in trenches)  # tiefster BG
-    Y_TOP     = CLR_BOT + TOP_SHIFT + MAX_DEPTH
-
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
 
@@ -949,7 +994,19 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if off:
             mat = surf.get("material", "")
             aufmass.append(f"Oberfläche {idx}: Randzone={off} m  Material={mat}")
-    
+
+    def _depths(bg: dict) -> tuple[float, float, float]:
+        d  = float(bg.get("depth") or 0.0)
+        dL = float(bg.get("depth_left",  d))
+        dR = float(bg.get("depth_right", d))
+        return max(d, dL, dR), dL, dR  # (ref, left, right)
+
+    def _append_trench_line(aufmass, idx, L, B, d_ref, dL, dR):
+        if abs(dL - dR) < 1e-9:
+            aufmass.append(f"Baugraben {idx}: l={L} m  b={B} m  t={d_ref} m")
+        else:
+            aufmass.append(f"Baugraben {idx}: l={L} m  b={B} m  t_links={dL} m  t_rechts={dR} m")
+
     # Hilfsfunktion am Anfang von _generate_dxf_intern definieren (oder lokal im Block):
     def _is_join_only(seam_idx: int) -> bool:
         # True, wenn an Naht seam_idx nur "Verbindung" existiert (kein Durchstich)
@@ -964,12 +1021,17 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     printed_pass: set[int] = set()          # 1-basierte Naht-Indizes: Aufmaß "Durchstich N" schon geschrieben?
     skip_single_next = False                # rechter Graben des letzten Merges schon gezeichnet -> Solo überspringen
 
+    MAX_DEPTH = max(_depths(t)[0] for t in trenches)
+    Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH
+
     # ---------- Hauptschleife über alle Baugräben ----------
     i = 0
     while i < len(trenches):
         # --- Basisdaten des linken Grabens ---
         bg1 = trenches[i]
-        L1, B1, T1 = map(float, (bg1["length"], bg1["width"], bg1["depth"]))
+        L1 = float(bg1.get("length", 0) or 0)
+        B1 = float(bg1.get("width", 0) or 0)
+        T1_ref, T1_L, T1_R = _depths(bg1)
 
         # linke Außen-X dieses Grabens: entweder schon gesetzt (aus vorherigem Merge),
         # sonst aktueller cursor_x
@@ -992,9 +1054,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 continue
 
             # Vorderansicht (Solo)
+            T1_ref, T1_L, T1_R = _depths(bg1)
+
             draw_trench_front(
-                msp, (x_start, 0.0), L1, T1,
-                clearance_left=CLR_LR, clearance_bottom=CLR_BOT
+                msp, (x_start, 0.0), L1, T1_ref,
+                clearance_left=CLR_LR, clearance_bottom=CLR_BOT,
+                depth_left=T1_L, depth_right=T1_R
             )
 
             # Draufsicht nur einmal je Graben
@@ -1058,7 +1123,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
             # Aufmaß Baugraben nur einmal
             if (i+1) not in printed_trench:
-                aufmass.append(f"Baugraben {i+1}: l={L1} m  b={B1} m  t={T1} m")
+                _append_trench_line(aufmass, i+1, L1, B1, T1_ref, T1_L, T1_R)
                 printed_trench.add(i+1)
 
             # Bookkeeping / Cursor
@@ -1071,7 +1136,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # B) Durchstich zwischen i und i+1 (Merge-Zeichnung)
         # --------------------------------------------------
         bg2 = trenches[i+1]
-        L2, B2, T2 = map(float, (bg2["length"], bg2["width"], bg2["depth"]))
+        L2 = float(bg2.get("length", 0) or 0)
+        B2 = float(bg2.get("width", 0) or 0)
+        T2_ref, T2_L, T2_R = _depths(bg2) 
 
         join_only = (pas is None) and ((i+1) in join_set)
         if not join_only and "length" not in pas:
@@ -1094,16 +1161,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         top_left_1 = (x_start + left_clear, Y_TOP)         
         top_left_2 = (x_start + left_clear + L1 + p_w, Y_TOP)
 
-        yTopL = CLR_BOT + T1
-        yTopR = CLR_BOT + T2
+        yTopL = CLR_BOT + T1_ref
+        yTopR = CLR_BOT + T2_ref
 
         pass_x0 = x_start + left_clear + p_off              # statt + CLR_LR
         pass_x1 = pass_x0 + p_w
 
         pass_y0_clip = CLR_BOT + PASS_BOTTOM_GAP
-        pass_y1 = CLR_BOT + max(T1, T2)
+        pass_y1 = CLR_BOT + max(T1_R, T2_L)
 
-        EPS_JOIN = 1e-3  # 1 mm Überlappung
+        EPS_JOIN = 1e-3 # 1 mm Überlappung
         x_inner_left  = x_start + left_clear
         x_inner_right = x_inner_left + L1 + p_w + L2
         y_inner_bot   = CLR_BOT
@@ -1140,6 +1207,24 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 return
             msp.add_lwpolyline([p1, p2], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
+        def _y_on_segment(xa, ya, xb, yb, x):
+            if abs(xb - xa) < 1e-9: return ya
+            t = (x - xa) / (xb - xa)
+            return ya + t * (yb - ya)
+
+        def add_outer_top_slope_clipped(xa, ya, xb, yb):
+            if xb < xa: xa, xb, ya, yb = xb, xa, yb, ya
+            # links vom Pass
+            if pass_x0 > xa:
+                xm = min(pass_x0, xb)
+                ym = _y_on_segment(xa, ya, xb, yb, xm)
+                msp.add_lwpolyline([(xa, ya), (xm, ym)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            # rechts vom Pass
+            if xb > pass_x1:
+                xm = max(pass_x1, xa)
+                ym = _y_on_segment(xa, ya, xb, yb, xm)
+                msp.add_lwpolyline([(xm, ym), (xb, yb)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
         # Obere Deckensegmente (wie gehabt geclippt über der Passage)
         xSeamInner = x_start + left_clear + L1
         xStep = xSeamInner
@@ -1162,8 +1247,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             msp.add_lwpolyline([(xR,   yTopR),           (xStep - EPS, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
             msp.add_lwpolyline([(xStep, yTopR - EPS),    (xStep,      yTopL + EPS)], dxfattribs={"layer": LAYER_TRENCH_OUT})
         else:
-            add_outer_line_clipped((xL, yTopL), (xStep, yTopL))
-            add_outer_line_clipped((xR, yTopR), (xStep, yTopR))
+            add_outer_top_slope_clipped(xL, CLR_BOT + T1_L, xStep, CLR_BOT + T1_R)
+            add_outer_top_slope_clipped(xStep, CLR_BOT + T2_L, xR, CLR_BOT + T2_R)
             add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
 
         # Innenkonturen beider Gräben (mit Lücken am Pass)
@@ -1172,32 +1257,21 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
         # Innenkonturen links (mit Lücke am rechten Ende = Passbreite)
         gap_len_l = min(L1, max(0.0, p_w))
-        draw_trench_front_lr(
-            msp, origin_front1, L1, T1,
-            clear_left=left_clear, 
-            clear_right=0.0, 
-            clear_bottom=CLR_BOT,
-            top_len_from_left=L1,
-            gap_top_from_left=max(0.0, L1 - gap_len_l),   # <— Lücke am rechten Ende
-            gap_top_len=gap_len_l,
-            draw_left_inner=not has_pass_left,            # <— innen links nur zeichnen, wenn links KEIN Pass
-            draw_right_inner=False,                       # <— am Pass KEINE rechte Innenwand
-            draw_outer=False,
-        )
-
-        # Innenkonturen rechts (mit Lücke am Anfang = Passbreite)
         gap_len_r = min(L2, max(0.0, p_w))
         draw_trench_front_lr(
-            msp, origin_front2, L2, T2,
-            clear_left=0.0, 
-            clear_right=right_clear,
-            clear_bottom=CLR_BOT,
-            top_clip_left=0.0,
-            gap_top_from_left=0.0,                         # <— Lücke ab Anfang
-            gap_top_len=gap_len_r,
-            draw_left_inner=False,                         # <— am Pass KEINE linke Innenwand
-            draw_right_inner=not has_pass_right,           # <— innen rechts nur, wenn RECHTS kein weiterer Pass
-            draw_outer=False,
+            msp, origin_front1, L1, T1_ref,
+            clear_left=left_clear, clear_right=0.0, clear_bottom=CLR_BOT,
+            top_len_from_left=L1, gap_top_from_left=max(0.0, L1 - gap_len_l), gap_top_len=gap_len_l,
+            draw_left_inner=not has_pass_left, draw_right_inner=False, draw_outer=False,
+            depth_left=T1_L, depth_right=T1_R,
+        )
+
+        draw_trench_front_lr(
+            msp, origin_front2, L2, T2_ref,
+            clear_left=0.0, clear_right=right_clear, clear_bottom=CLR_BOT,
+            top_clip_left=0.0, gap_top_from_left=0.0, gap_top_len=gap_len_r,
+            draw_left_inner=False, draw_right_inner=not has_pass_right, draw_outer=False,
+            depth_left=T2_L, depth_right=T2_R,
         )
 
         # Oberflächen links/rechts nur einmal je Graben
@@ -1236,7 +1310,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     len_total_L = L1 + 2*offL
                     width_total_L = B1 + 2*offL
                     aufmass.append(
-                        f"Oberfläche {i+1}: Randzone={offL} m  länge={len_total_L} m  breite={width_total_L} m"
+                        f"Oberfläche {i+1}: Randzone={offL} m  l={len_total_L} m  b={width_total_L} m"
                         + (f"  Material={matL}" if matL else "")
                     )
             drawn_surface.add(i+1)
@@ -1369,7 +1443,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         x_left_inner  = x_start + left_clear
         x_right_outer = x_start + left_clear + L1 + p_w + L2 + right_clear  # = xR
         x_right_inner = x_right_outer - right_clear
-        T_right       = T2  # Clusterende → rechter Graben dieses Merges
+        T_right = T2_ref # Clusterende → rechter Graben dieses Merges
 
         # 1) Bodenband + linke Wand: nur am Clusteranfang
         if not has_pass_left:
@@ -1395,7 +1469,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             _hatch_rect(x_left_outer + EPS, EPS,
                         x_right_outer_cluster - EPS, max(CLR_BOT - EPS, 0.0))
             _hatch_rect(x_left_outer + EPS, CLR_BOT + EPS,
-                        x_left_inner  - EPS, CLR_BOT + T1 - EPS)
+                        x_left_inner  - EPS, CLR_BOT + T1_ref - EPS)
 
         # 2) Rechte Wand: nur am Clusterende (dein Code)
         if not has_pass_right and right_clear > 2*EPS:
@@ -1408,7 +1482,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 msp,
                 trench_origin=origin_front1,
                 trench_len=L_combo,
-                trench_depth=max(T1, T2),
+                trench_depth=max(T1_ref, T2_ref),
                 width=p_w,
                 offset=p_off,
                 clearance_left=left_clear,
@@ -1423,8 +1497,15 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             dxfattribs={"layer": LAYER_TRENCH_IN},
         )
 
-        # Außenlinien unten durchgehend, aber linke/rechte Außenkante nur an den Cluster-Enden
-        msp.add_lwpolyline([(xL, 0.0), (xR, 0.0)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        # Außenlinie unten: links (BG i) und rechts (BG i+1) jeweils schräg
+        yBot_L0 = (T1_ref - T1_L)
+        yBot_L1 = (T1_ref - T1_R)
+        yBot_R0 = (T2_ref - T2_L)
+        yBot_R1 = (T2_ref - T2_R)
+
+        msp.add_lwpolyline([(xL,   yBot_L0), (xStep, yBot_L1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        msp.add_lwpolyline([(xStep, yBot_R0), (xR,    yBot_R1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
         if not has_pass_left:
             msp.add_lwpolyline([(xL, 0.0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
         if not has_pass_right:
@@ -1443,10 +1524,10 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 aufmass.append(f"Durchstich {i+1}: l={p_w} m")
                 printed_pass.add(i+1)
         if (i+1) not in printed_trench:
-            aufmass.append(f"Baugraben {i+1}: l={L1} m  b={B1} m  t={T1} m")
+            _append_trench_line(aufmass, i+1, L1, B1, T1_ref, T1_L, T1_R)
             printed_trench.add(i+1)
         if (i+2) not in printed_trench:
-            aufmass.append(f"Baugraben {i+2}: l={L2} m  b={B2} m  t={T2} m")
+            _append_trench_line(aufmass, i+2, L2, B2, T2_ref, T2_L, T2_R)
             printed_trench.add(i+2)
 
         # Bookkeeping:
@@ -1504,6 +1585,10 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
 
     ZIEL
     • Bestimme GENAU EIN Zielobjekt und die zu ändernden Felder.
+    • Wenn die Anweisung „links“/„rechts“ enthält, ändere NUR das zugehörige Feld:
+        – links  → set.depth_left
+        – rechts → set.depth_right
+        Setze „depth“ nicht zusätzlich; das System berücksichtigt die größte Tiefe intern.
 
     ADRESSIERUNG
     • Typen: "Baugraben" | "Rohr" | "Oberflächenbefestigung" | "Durchstich".
@@ -1523,7 +1608,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     • KEIN 'trench_index' bei Nicht-Baugraben setzen.
 
     ERLAUBTE ÄNDERUNGEN
-    length | width | depth | diameter | material | offset | pattern
+    length | width | depth | depth_left | depth_right | diameter | material | offset | pattern
     • „DN300“ o. ä. → diameter = 0.30 (Meter).
     • Komma-/Punktwerte und Einheiten mm/cm/m korrekt interpretieren.
 

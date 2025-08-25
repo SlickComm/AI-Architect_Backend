@@ -11,6 +11,7 @@ import uuid, pathlib
 import json
 
 from openai import AsyncOpenAI
+from reportlab.lib import colors
 
 from app.utils.session_manager import session_manager
 from app.services.lv_matcher     import best_matches_batch, parse_aufmass
@@ -140,7 +141,24 @@ async def match_lv(req: MatchRequest):
 def build_invoice(req: InvoiceRequest):
     pathlib.Path("temp").mkdir(exist_ok=True)
     pdf = f"temp/invoice_{uuid.uuid4()}.pdf"
-    make_invoice(pdf, company="Muster GmbH", mapping=req.mapping)
+    
+    make_invoice(
+        file=pdf,                                
+        company="BUG VERKEHRSBAU SE",
+        mapping=req.mapping,                     
+        recipient={"name": "DB InfraGO AG - BK 16 RB Ost",
+                   "lines": ["Elisabeth-Schwarzhaupt-Platz 1", "10115 Berlin"]},
+        invoice_meta={"nr": "AT0218-2025", "date": "18.02.2025",
+                     "project": "TWL Kaulsdorf – techn. Bearbeitung"},
+        cover_meta={"period":"Februar 2025",
+                    "subject":"Bestell-Nr.: 0016/368/13503927 v. 03.01.2025",
+                    "cost_center":"7201941",
+                    "due":"21 Tage 3% Skonto, 30 Tage ohne Abzug"},
+        logo_path=None,                         
+        brand_color=colors.HexColor("#6DB33F"),
+        add_cover=True
+    )
+
     return FileResponse(pdf,
                         media_type="application/pdf",
                         filename="Rechnung.pdf")
