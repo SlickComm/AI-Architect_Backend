@@ -1586,9 +1586,20 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     ZIEL
     • Bestimme GENAU EIN Zielobjekt und die zu ändernden Felder.
     • Wenn die Anweisung „links“/„rechts“ enthält, ändere NUR das zugehörige Feld:
-        – links  → set.depth_left
-        – rechts → set.depth_right
-        Setze „depth“ nicht zusätzlich; das System berücksichtigt die größte Tiefe intern.
+    – links  → set.depth_left
+    – rechts → set.depth_right
+    Setze „depth“ NICHT zusätzlich; das System berücksichtigt die größte Tiefe intern.
+    • Formulierungen mit „weitere Tiefe“ / „zusätzliche Tiefe“ sind KEINE neuen Objekte,
+    sondern ein Feld-Update (z. B. set.depth_right = …).
+
+    BEISPIELE (sehr wichtig)
+    Eingabe: "Füge zum ersten Baugraben eine weitere Tiefe rechts mit 1,50 m hinzu."
+    Antwort:
+    {{
+    "selection": {{ "type": "Baugraben", "trench_index": 1 }},
+    "set": {{ "depth_right": 1.5 }},
+    "answer": "Tiefe rechts bei Baugraben 1 auf 1,50 m gesetzt."
+    }}
 
     ADRESSIERUNG
     • Typen: "Baugraben" | "Rohr" | "Oberflächenbefestigung" | "Durchstich".
