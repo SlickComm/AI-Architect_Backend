@@ -1,6 +1,6 @@
 # cad/pipe.py
 import ezdxf
-from typing import Tuple
+from typing import Tuple, Optional
 
 # ---------------------- feste Konstanten ----------------------
 LAYER_PIPE = "Rohr"
@@ -26,42 +26,67 @@ def register_layers(doc: ezdxf.document.Drawing) -> None:
                                                    "linetype": "DASHDOT"})
 
 # --------------------- Zeichenfunktion ------------------------
-def draw_pipe_front(msp,
-                    origin_front: Tuple[float, float],
-                    trench_inner_length: float,
-                    diameter: float) -> None:
+def draw_pipe_front(
+    msp,
+    origin_front: Tuple[float, float],
+    trench_inner_length: float,
+    diameter: float,
+    *,
+    span_length: Optional[float] = None, 
+    offset: float = 0.0,                   
+) -> float:
                     
-    left  = origin_front[0] + CLEARANCE_SIDE
-    right = origin_front[0] + trench_inner_length - CLEARANCE_SIDE
-    y_bot = origin_front[1]
-    y_top = y_bot + diameter
+    """
+    Zeichnet das Rohr und gibt die *tatsächlich gezeichnete* Länge zurück.
+    Es wird nie über die 0,5 m Randzone hinaus gezeichnet.
+    """
+    # origin_front[0] ist die linke **Innenkante** des Baugrabens
+    x_inner_left  = origin_front[0]
+    x_inner_right = origin_front[0] + trench_inner_length
 
-    # Rohrquerschnitt (rechteckig)
+    # Start mit Versatz, aber min. 0,5 m Abstand zur linken Innenkante
+    x_start = max(x_inner_left + CLEARANCE_SIDE, x_inner_left + max(0.0, float(offset)))
+
+    # Bis max. rechte Innenkante minus 0,5 m
+    usable_right = x_inner_right - CLEARANCE_SIDE
+    usable = max(0.0, usable_right - x_start)
+
+    want = usable if span_length is None else max(0.0, float(span_length))
+    eff_len = min(want, usable)
+    if eff_len <= 1e-9:
+        return 0.0  # nichts zu zeichnen
+
+    y_bot = origin_front[1]
+    y_top = y_bot + float(diameter)
+
+    # Rechteck fürs Rohr:
     msp.add_lwpolyline(
-        [(left, y_bot), (right, y_bot),
-         (right, y_top), (left, y_top)],
+        [(x_start, y_bot), (x_start + eff_len, y_bot),
+         (x_start + eff_len, y_top), (x_start, y_top)],
         close=True, dxfattribs={"layer": LAYER_PIPE}
     )
 
-    # Symmetrielinie
+    # Symmetrielinie:
     msp.add_line(
-        (left, (y_bot + y_top) / 2),
-        (right, (y_bot + y_top) / 2),
-        dxfattribs={"layer": LAYER_SYM}
+        (x_start, (y_bot + y_top) / 2),
+        (x_start + eff_len, (y_bot + y_top) / 2),
+        dxfattribs={"layer": LAYER_SYM},
     )
 
-    # Horizontal (Rohrlänge)
+    # Maß der gezeichneten Länge:
     msp.add_linear_dim(
-        base=(left, y_bot - DIM_OFFSET),     # Maßlinie UNTER dem Rohr
-        p1=(left, y_bot),
-        p2=(right, y_bot),
+        base=(x_start, y_bot - DIM_OFFSET),
+        p1=(x_start, y_bot),
+        p2=(x_start + eff_len, y_bot),
         angle=0,
         override={
             "dimtxt": DIM_TXT_H,
             "dimclrd": 3,
             "dimexe": DIM_EXE_OFF,
             "dimexo": DIM_EXE_OFF,
-            "dimtad": 0,                     # Text mittig auf Maßlinie
+            "dimtad": 0,
         },
-        dxfattribs={"layer": LAYER_DIM}
+        dxfattribs={"layer": LAYER_DIM},
     ).render()
+
+    return eff_len

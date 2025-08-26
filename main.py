@@ -655,7 +655,6 @@ GRUNDREGELN
   Die Tiefe kommt dann aus „Tiefe …“/„links … rechts …“. Du MUSST im JSON immer auch
   das Feld "depth" setzen: depth = max(depth_left, depth_right).
 
-
 REFERENZIERUNG (sehr wichtig)
 • "trench_index" NUR bei type == "Baugraben".
 • Rohr und Oberflächenbefestigung: IMMER "for_trench": <1-basiger Ziel-Baugraben>.
@@ -664,6 +663,30 @@ REFERENZIERUNG (sehr wichtig)
   bedeuten: setze "for_trench" = N (nur für Rohr/Oberfläche).
 • Erfinde KEINE neuen Baugräben. Wenn die Anweisung auf einen nicht existierenden
   Baugraben verweist, erzeuge KEIN Element und schreibe das im "answer".
+
+────────────────────────────────────────────
+ROHR-REGELN (Pflicht)
+────────────────────────────────────────────
+• Für type="Rohr" gilt:
+  – "for_trench": Ziel-Baugraben (1-basiert) ist Pflicht.
+  – "diameter": Pflicht (z. B. DN150 → 0,15).
+  – "length": Pflicht, **außer** der Text enthält ausdrücklich
+    „über die gesamte Länge“/„über die volle Länge“.
+    In diesem Sonderfall setze: "full_span": true und lasse "length" weg.
+  – "offset": optionaler Startversatz ab linker Innenkante (Meter).
+  – Wenn KEINE Länge genannt ist (z. B. „Zeichne Druckrohr DN300 in BG 2“),
+    INTERPRETIERE das als „über die gesamte Länge“ und setze "full_span": true.
+    (Synonyme: „einziehen“, „einlegen“, „entlang des Baugrabens“, „auf ganzer Länge“,
+    „komplette Länge“, „volle Länge“)
+• Beispiel 1:
+  „Zeichne Druckrohr mit Länge 6 m in BG 1, DN150.“
+  → {{"type":"Rohr","for_trench":1,"diameter":0.15,"length":6.0}}
+• Beispiel 2:
+  „Zeichne Druckrohr mit 6 m Länge und Versatz 2 m in BG 2.“
+  → {{"type":"Rohr","for_trench":2,"diameter":0.15,"length":6.0,"offset":2.0}}
+• Beispiel 3:
+  „Zeichne Druckrohr über die gesamte Länge in BG 1, DN200.“
+  → {{"type":"Rohr","for_trench":1,"diameter":0.20,"full_span":true}}
 
 ────────────────────────────────────────────
 SETZE trench_index NUR BEI BAUGRABEN
@@ -1012,6 +1035,13 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # True, wenn an Naht seam_idx nur "Verbindung" existiert (kein Durchstich)
         return (seam_idx in join_set) and (_pass_for_between(passes, seam_idx) is None)
 
+    def _pipe_full_and_want(pipe: dict):
+        full = str(pipe.get("full_span", "")).lower() in ("true","1","yes")
+        L = float(pipe.get("length", 0) or 0.0)
+        if not full and L <= 0:
+            full = True
+        return full, (None if full else L)
+
     # --- Neu: Positions- & Duplikat-Tracking ---
     trench_origin_x: dict[int, float] = {}  # 0-basierter Index -> Außen-Links-X in der Vorderansicht
     drawn_top: set[int] = set()             # 1-basierte Indizes: Draufsicht schon gezeichnet?
@@ -1076,15 +1106,21 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             if pipe:
                 d = float(pipe.get("diameter", 0) or 0)
                 if d > 0 and (i+1) not in drawn_pipe:
-                    draw_pipe_front(
+                    off = float(pipe.get("offset", 0) or 0.0)
+                    full, want = _pipe_full_and_want(pipe)
+                    eff = draw_pipe_front(
                         msp,
-                        origin_front=(x_start+CLR_LR, CLR_BOT),
+                        origin_front=(x_start + CLR_LR, CLR_BOT),
                         trench_inner_length=L1,
-                        diameter=d
+                        diameter=d,
+                        span_length=want,
+                        offset=off,
                     )
-                    pipe_len = pipe.get("length", max(0, L1 - 1))
-                    aufmass.append(f"Rohr {i+1}: l={pipe_len} m  Ø={d} m")
-                    drawn_pipe.add(i+1)
+                    if eff > 0:
+                        aufmass.append(
+                            f"Rohr {i+1}: l={eff} m  Ø={d} m" + (f"  Versatz={off} m" if off else "")
+                        )
+                        drawn_pipe.add(i+1)
 
             # Oberflächen je Graben nur einmal
             seg_list = _surfaces_for_trench(surfaces, i+1)
@@ -1397,29 +1433,81 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 # kein weiterer Durchstich → Cluster endet hier
                 last_idx = idx
                 break
-
-            # Nimm das erste vorhandene Rohr innerhalb des Clusters (links → rechts)
+            
             pipe_src = None
             for k in range(i, last_idx + 1):
-                cand = _first_pipe_for_trench(pipes, k + 1)  # 1-basiert
-                if cand:
+                cand = _first_pipe_for_trench(pipes, k + 1)
+                if not cand:
+                    continue
+                cand_full, _ = _pipe_full_and_want(cand)  # behandelt auch fehlende/0-Länge als "voll"
+                if cand_full:
                     pipe_src = cand
                     break
-
+            # 3) Durchgehendes Rohr zeichnen
             if pipe_src:
-                d = float(pipe_src.get("diameter", 0) or 0)
+                d   = float(pipe_src.get("diameter", 0) or 0)
+                off = float(pipe_src.get("offset", 0) or 0.0)
                 if d > 0:
-                    # Start ganz links am Cluster (Innenkante vom ersten Graben)
-                    draw_pipe_front(
+                    eff = draw_pipe_front(
                         msp,
-                        origin_front=(x_start + left_clear, CLR_BOT),
+                        origin_front=(x_start + left_clear, CLR_BOT),  # Innenkante ganz links im Cluster
                         trench_inner_length=L_span,
                         diameter=d,
+                        span_length=None,   # volle nutzbare Länge
+                        offset=off,
                     )
-                    aufmass.append(f"Rohr {i+1}–{last_idx+1}: l={max(0, L_span - 1)} m  Ø={d} m")
-                    # optional: alle Gräben des Clusters als 'Pipe gezeichnet' markieren
-                    for k in range(i, last_idx + 1):
-                        drawn_pipe.add(k + 1)
+                    if eff > 0:
+                        aufmass.append(f"Rohr {i+1}–{last_idx+1}: l={eff} m  Ø={d} m" + (f"  Versatz={off} m" if off else ""))
+                        for k in range(i, last_idx + 1):
+                            drawn_pipe.add(k + 1)
+
+        # Linker Graben i+1
+        pipeL = _first_pipe_for_trench(pipes, i+1)
+        if pipeL and (i+1) not in drawn_pipe:
+            dL = float(pipeL.get("diameter", 0) or 0)
+            if dL > 0:
+                offL = float(pipeL.get("offset", 0) or 0.0)
+                fullL, wantL = _pipe_full_and_want(pipeL)
+                if not fullL and float(pipeL.get("length") or 0) <= 0:
+                    raise HTTPException(400, f"Rohr in BG {i+1}: Länge fehlt.")
+                wantL = None if fullL else float(pipeL.get("length"))
+                effL = draw_pipe_front(
+                    msp,
+                    origin_front=(x_start + left_clear, CLR_BOT),  # Innenkante BG i+1
+                    trench_inner_length=L1,
+                    diameter=dL,
+                    span_length=wantL,
+                    offset=offL,
+                )
+                if effL > 0:
+                    aufmass.append(
+                        f"Rohr {i+1}: l={effL} m  Ø={dL} m" + (f"  Versatz={offL} m" if offL else "")
+                    )
+                    drawn_pipe.add(i+1)
+
+        # Rechter Graben i+2
+        pipeR = _first_pipe_for_trench(pipes, i+2)
+        if pipeR and (i+2) not in drawn_pipe:
+            dR = float(pipeR.get("diameter", 0) or 0)
+            if dR > 0:
+                offR = float(pipeR.get("offset", 0) or 0.0)
+                fullR, wantR = _pipe_full_and_want(pipeR)
+                if not fullR and float(pipeR.get("length") or 0) <= 0:
+                    raise HTTPException(400, f"Rohr in BG {i+2}: Länge fehlt.")
+                wantR = None if fullR else float(pipeR.get("length"))
+                effR = draw_pipe_front(
+                    msp,
+                    origin_front=(x_start + left_clear + L1 + p_w, CLR_BOT),  # Innenkante BG i+2
+                    trench_inner_length=L2,
+                    diameter=dR,
+                    span_length=wantR,
+                    offset=offR,
+                )
+                if effR > 0:
+                    aufmass.append(
+                        f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else "")
+                    )
+                    drawn_pipe.add(i+2)                
 
         # --- HATCH: Rand-Schraffur: Boden+links am Clusteranfang, rechts am Clusterende ---
         def _hatch_rect(x0, y0, x1, y1):
