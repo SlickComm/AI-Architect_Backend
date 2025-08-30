@@ -92,8 +92,12 @@ def _normalize_and_reindex(session: dict) -> None:
         tt = tnorm(e)
 
         if "baugraben" in tt:
-            keep.append(e)
-            continue
+            if "gok" not in e or e["gok"] is None or e["gok"] == "":
+                e["gok"] = 0.0
+            else:
+                # robust in float wandeln
+                mv = _num_to_meters(e["gok"])
+                e["gok"] = mv if mv is not None else 0.0
 
         # NEU: Fremd-feld entfernen
         e.pop("trench_index", None)
@@ -398,6 +402,7 @@ FIELD_ALIASES = {
     "dn": "diameter", "durchmesser": "diameter", "ø": "diameter", "diameter": "diameter",
     "randzone": "offset", "offset": "offset",
     "material": "material", "pattern": "pattern",
+    "gok": "gok", "geländeoberkante": "gok", "gelaendeoberkante": "gok", "okg": "gok", "ok gelände": "gok", "ok gelaende": "gok",
 }
 
 def _norm_text(s: str) -> str:
@@ -412,10 +417,7 @@ def _normalize_type_aliases(t: str) -> str:
     if "baugraben" in t0 or "graben" in t0: return "Baugraben"
     return t
 
-import re
-
 def _num_to_meters(x) -> Optional[float]:
-    # akzeptiere float/int direkt
     if isinstance(x, (int, float)):
         return float(x)
     s = _norm_text(str(x))
@@ -426,8 +428,8 @@ def _num_to_meters(x) -> Optional[float]:
     if m:
         return float(m.group(1)) / 1000.0
 
-    # Ø300mm / 300 mm / 30cm / 3m
-    m = re.match(r"^([0-9]*\.?[0-9]+)\s*(mm|cm|m)?$", s)
+    # +/− zulassen: ±0.09 mm/cm/m oder ohne Einheit
+    m = re.match(r"^[+-]?([0-9]*\.?[0-9]+)\s*(mm|cm|m)?$", s)
     if m:
         val = float(m.group(1))
         unit = (m.group(2) or "m")
@@ -435,13 +437,8 @@ def _num_to_meters(x) -> Optional[float]:
         if unit == "cm": return val / 100.0
         return val
 
-    # „Ø0.3“ ohne Einheit
-    m = re.match(r"^([0-9]*\.?[0-9]+)$", s)
-    if m:
-        return float(m.group(1))
-
-    # Fallback: suche "... mm" irgendwo
-    m = re.search(r"([0-9]*\.?[0-9]+)\s*mm", s)
+    # Fallback: ... mm irgendwo, mit optionalem Vorzeichen
+    m = re.search(r"[+-]?([0-9]*\.?[0-9]+)\s*mm", s)
     if m:
         return float(m.group(1))/1000.0
     return None
@@ -542,22 +539,20 @@ def _build_edit_context(session: dict) -> str:
 # -----------------------------------------------------
 # START HELPER GEFÄLLE
 # -----------------------------------------------------
-_ALLOWED_EDIT_FIELDS = {
-  "length","width","depth","diameter","material","offset","pattern",
-  "depth_left","depth_right",
-}
+_ALLOWED_EDIT_FIELDS = {"length","width","depth","diameter","material","offset","pattern","depth_left","depth_right","gok"}
 
 FIELD_ALIASES.update({
   # Gefälle links/rechts
   "tl":"depth_left","t_l":"depth_left","tiefe_links":"depth_left","tlinks":"depth_left",
   "tr":"depth_right","t_r":"depth_right","tiefe_rechts":"depth_right","trechts":"depth_right",
+  "gok": "gok", "geländeoberkante": "gok", "gelaendeoberkante": "gok", "okg": "gok", "ok gelände": "gok", "ok gelaende": "gok",
 })
 
 def _coerce_updates(upd: dict) -> dict:
     out = {}
     for k, v in (upd or {}).items():
         key = FIELD_ALIASES.get(_norm_text(k), k)
-        if key in {"length","width","depth","diameter","offset","depth_left","depth_right"}:
+        if key in {"length","width","depth","diameter","offset","depth_left","depth_right","gok"}:
             mv = _num_to_meters(v)
             if mv is not None:
                 out[key] = mv
@@ -663,6 +658,14 @@ REFERENZIERUNG (sehr wichtig)
   bedeuten: setze "for_trench" = N (nur für Rohr/Oberfläche).
 • Erfinde KEINE neuen Baugräben. Wenn die Anweisung auf einen nicht existierenden
   Baugraben verweist, erzeuge KEIN Element und schreibe das im "answer".
+
+────────────────────────────────────────────
+GELÄNDEOBERKANTE (GOK)
+────────────────────────────────────────────
+• Für type="Baugraben" darf optional "gok" angegeben werden.
+• Akzeptiere Schreibweisen wie: "GOK +0,09", "Geländeoberkante -0,05", "OK Gelände 0,12".
+• Werte in Metern; Plus/Minus ist erlaubt.
+• Wenn KEIN GOK-Wert im Text steht → setze "gok": 0.0.
 
 ────────────────────────────────────────────
 ROHR-REGELN (Pflicht)
@@ -832,7 +835,8 @@ Wir arbeiten mit diesem JSON-Schema, wobei bei
 
       "material": "",
       "offset":   0.0,
-      "pattern":  ""      # nur für Durchstich (Schraffur-Name)
+      "pattern":  "",      # nur für Durchstich (Schraffur-Name)
+      "gok":      0.0 
     }}
   ],
   "answer": ""
@@ -880,8 +884,18 @@ ANTWORTFORMAT  (genau so!)
     new_json = json.loads(resp.choices[0].message.content)
 
     added = new_json.get("new_elements") or new_json.get("elements") or []
-    if not isinstance(added, list):
-        raise HTTPException(400, "Antwort enthielt keine Element-Liste")
+
+    for el in added:
+        t = (el.get("type","") or "").lower()
+        if "baugraben" in t:
+            if "gok" not in el or el["gok"] is None or el["gok"] == "":
+                el["gok"] = 0.0
+            else:
+                mv = _num_to_meters(el["gok"])
+                el["gok"] = mv if mv is not None else 0.0
+
+        if not isinstance(added, list):
+            raise HTTPException(400, "Antwort enthielt keine Element-Liste")
 
     # ⑤ Session aktualisieren
     current_json["elements"].extend(added)
@@ -1025,10 +1039,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         return max(d, dL, dR), dL, dR  # (ref, left, right)
 
     def _append_trench_line(aufmass, idx, L, B, d_ref, dL, dR):
+        line = ""
         if abs(dL - dR) < 1e-9:
-            aufmass.append(f"Baugraben {idx}: l={L} m  b={B} m  t={d_ref} m")
+            line = f"Baugraben {idx}: l={L} m  b={B} m  t={d_ref} m"
         else:
-            aufmass.append(f"Baugraben {idx}: l={L} m  b={B} m  t_links={dL} m  t_rechts={dR} m")
+            line = f"Baugraben {idx}: l={L} m  b={B} m  t_links={dL} m  t_rechts={dR} m"
+
+        # NEU: GOK optional anhängen
+        bg = trenches[idx-1]
+        gok = float(bg.get("gok") or 0.0)
+        if abs(gok) > 1e-9:
+            sign = "+" if gok >= 0 else ""
+            line += f"  GOK={sign}{gok} m"
+        aufmass.append(line)
+
 
     # Hilfsfunktion am Anfang von _generate_dxf_intern definieren (oder lokal im Block):
     def _is_join_only(seam_idx: int) -> bool:
@@ -1055,6 +1079,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     MAX_DEPTH = max(_depths(t)[0] for t in trenches)
     Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH
 
+    # NEU: gemeinsamer Bottom-Offset je Graben, damit die Oberkante auf gleicher Höhe liegt
+    def _base_y(depth_ref: float) -> float:
+        depth_ref = float(depth_ref or 0.0)
+        return CLR_BOT + (MAX_DEPTH - depth_ref)
+
     # ---------- Hauptschleife über alle Baugräben ----------
     i = 0
     while i < len(trenches):
@@ -1069,7 +1098,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         x_start = trench_origin_x.get(i, cursor_x)
 
         # Gibt es direkt rechts von BG i einen Durchstich?
-        pas = _pass_for_between(passes, i+1)  # between ist 1-basiert
+        pas = _pass_for_between(passes, i+1)
         has_neighbor = (i+1 < len(trenches))
         merge_next = has_neighbor and _has_link_between(i+1)
 
@@ -1077,33 +1106,32 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # A) Kein Durchstich zwischen i und i+1
         # --------------------------------------------------
         if not merge_next:
-            # Wurde dieser Graben schon als rechter Teil eines vorherigen Merges gezeichnet?
             if skip_single_next:
-                # nichts zeichnen, nur Flag zurücksetzen und weiter
                 skip_single_next = False
                 i += 1
                 continue
 
-            # Vorderansicht (Solo)
-            T1_ref, T1_L, T1_R = _depths(bg1)
+            # NEU: individueller Bottom-Offset, damit y_top = CLR_BOT + MAX_DEPTH
+            base1 = _base_y(T1_ref)
 
+            # Vorderansicht (Solo) – Bottom-Offset anwenden
             draw_trench_front(
                 msp, (x_start, 0.0), L1, T1_ref,
-                clearance_left=CLR_LR, clearance_bottom=CLR_BOT,
+                clearance_left=CLR_LR, clearance_bottom=base1,
                 depth_left=T1_L, depth_right=T1_R
             )
             printed_depth.add(i+1)
 
-            # Draufsicht nur einmal je Graben
+            # Draufsicht (Top) – bleibt wie bisher auf gemeinsamer Y_TOP
             if (i+1) not in drawn_top:
                 draw_trench_top(
                     msp, (x_start+CLR_LR, Y_TOP),
                     length=L1, width=B1,
-                    dim_right=(i + 1 == len(trenches))   # <— nur beim letzten BG
+                    dim_right=(i + 1 == len(trenches))
                 )
                 drawn_top.add(i+1)
 
-            # optional Rohr nur einmal je Graben
+            # Rohr: ebenfalls vom individuellen Bottom-Offset starten
             pipe = _first_pipe_for_trench(pipes, i+1)
             if pipe:
                 d = float(pipe.get("diameter", 0) or 0)
@@ -1112,7 +1140,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     full, want = _pipe_full_and_want(pipe)
                     eff = draw_pipe_front(
                         msp,
-                        origin_front=(x_start + CLR_LR, CLR_BOT),
+                        origin_front=(x_start + CLR_LR, base1),
                         trench_inner_length=L1,
                         diameter=d,
                         span_length=want,
