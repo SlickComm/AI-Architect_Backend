@@ -92,15 +92,15 @@ def _normalize_and_reindex(session: dict) -> None:
         tt = tnorm(e)
 
         if "baugraben" in tt:
-            if "gok" not in e or e["gok"] is None or e["gok"] == "":
+            # GOK normalisieren
+            if "gok" not in e or e["gok"] in (None, ""):
                 e["gok"] = 0.0
             else:
-                # robust in float wandeln
                 mv = _num_to_meters(e["gok"])
                 e["gok"] = mv if mv is not None else 0.0
-
-        # NEU: Fremd-feld entfernen
-        e.pop("trench_index", None)
+        else:
+            # nur Nicht-Baugräben bereinigen
+            e.pop("trench_index", None)
 
         if "rohr" in tt or "oberflächenbefest" in tt or "oberflaechenbefest" in tt:
             ref = int(e.get("for_trench", 0))
@@ -405,6 +405,15 @@ FIELD_ALIASES = {
     "gok": "gok", "geländeoberkante": "gok", "gelaendeoberkante": "gok", "okg": "gok", "ok gelände": "gok", "ok gelaende": "gok",
 }
 
+_ALLOWED_EDIT_FIELDS = {"length","width","depth","diameter","material","offset","pattern","depth_left","depth_right","gok"}
+
+FIELD_ALIASES.update({
+  # Gefälle links/rechts
+  "tl":"depth_left","t_l":"depth_left","tiefe_links":"depth_left","tlinks":"depth_left",
+  "tr":"depth_right","t_r":"depth_right","tiefe_rechts":"depth_right","trechts":"depth_right",
+  "gok": "gok", "geländeoberkante": "gok", "gelaendeoberkante": "gok", "okg": "gok", "ok gelände": "gok", "ok gelaende": "gok",
+})
+
 def _norm_text(s: str) -> str:
     return (s or "").strip().lower().replace("ä","ae").replace("ö","oe").replace("ü","ue").replace("ß","ss")
 
@@ -539,15 +548,6 @@ def _build_edit_context(session: dict) -> str:
 # -----------------------------------------------------
 # START HELPER GEFÄLLE
 # -----------------------------------------------------
-_ALLOWED_EDIT_FIELDS = {"length","width","depth","diameter","material","offset","pattern","depth_left","depth_right","gok"}
-
-FIELD_ALIASES.update({
-  # Gefälle links/rechts
-  "tl":"depth_left","t_l":"depth_left","tiefe_links":"depth_left","tlinks":"depth_left",
-  "tr":"depth_right","t_r":"depth_right","tiefe_rechts":"depth_right","trechts":"depth_right",
-  "gok": "gok", "geländeoberkante": "gok", "gelaendeoberkante": "gok", "okg": "gok", "ok gelände": "gok", "ok gelaende": "gok",
-})
-
 def _coerce_updates(upd: dict) -> dict:
     out = {}
     for k, v in (upd or {}).items():
@@ -660,14 +660,6 @@ REFERENZIERUNG (sehr wichtig)
   Baugraben verweist, erzeuge KEIN Element und schreibe das im "answer".
 
 ────────────────────────────────────────────
-GELÄNDEOBERKANTE (GOK)
-────────────────────────────────────────────
-• Für type="Baugraben" darf optional "gok" angegeben werden.
-• Akzeptiere Schreibweisen wie: "GOK +0,09", "Geländeoberkante -0,05", "OK Gelände 0,12".
-• Werte in Metern; Plus/Minus ist erlaubt.
-• Wenn KEIN GOK-Wert im Text steht → setze "gok": 0.0.
-
-────────────────────────────────────────────
 ROHR-REGELN (Pflicht)
 ────────────────────────────────────────────
 • Für type="Rohr" gilt:
@@ -701,6 +693,14 @@ SETZE trench_index NUR BEI BAUGRABEN
     {{ "type":"Rohr", "diameter":0.15 }}          # kein Index
 • Beispiel (FALSCH – wird verworfen)
     {{ "type":"Rohr", "diameter":0.15, "trench_index":2 }}
+
+────────────────────────────────────────────
+GELÄNDEOBERKANTE (GOK)
+────────────────────────────────────────────
+• Für type="Baugraben" darf optional "gok" angegeben werden.
+• Akzeptiere Schreibweisen wie: "GOK +0,09", "Geländeoberkante -0,05", "OK Gelände 0,12".
+• Werte in Metern; Plus/Minus ist erlaubt.
+• Wenn KEIN GOK-Wert im Text steht → setze "gok": 0.0.
 
 ────────────────────────────────────────────
 MEHRERE OBERFLÄCHEN PRO BAUGRABEN (STUFUNG)
@@ -1079,6 +1079,26 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     MAX_DEPTH = max(_depths(t)[0] for t in trenches)
     Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH
 
+    # --- Tiefenmaße im Merge (Durchstich ODER Verbindung) ----------------------
+    def _add_depth_dim(x_col, y_top, depth, base_x):
+        msp.add_linear_dim(
+            base=(base_x, CLR_BOT),
+            p1=(x_col, y_top),
+            p2=(x_col, y_top - depth),
+            angle=90,
+            override={
+                "dimtxt": DIM_TXT_H,
+                "dimclrd": 3,
+                "dimexe": DIM_EXE_OFF,
+                "dimexo": DIM_EXE_OFF,
+                "dimtad": 0,
+            },
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
+
+    def _same(a, b, eps=1e-6):
+        return abs(float(a) - float(b)) < eps
+
     # NEU: gemeinsamer Bottom-Offset je Graben, damit die Oberkante auf gleicher Höhe liegt
     def _base_y(depth_ref: float) -> float:
         depth_ref = float(depth_ref or 0.0)
@@ -1113,14 +1133,15 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
             # NEU: individueller Bottom-Offset, damit y_top = CLR_BOT + MAX_DEPTH
             base1 = _base_y(T1_ref)
+            oy1   = base1 - 0.2
 
-            # Vorderansicht (Solo) – Bottom-Offset anwenden
+            # Solo (kein Merge zur rechten Seite)
             draw_trench_front(
-                msp, (x_start, 0.0), L1, T1_ref,
-                clearance_left=CLR_LR, clearance_bottom=base1,
-                depth_left=T1_L, depth_right=T1_R
+                msp, (x_start, oy1), L1, T1_ref,
+                clearance_left=CLR_LR,
+                clearance_bottom=0.2,
+                depth_left=T1_L, depth_right=T1_R,
             )
-            printed_depth.add(i+1)
 
             # Draufsicht (Top) – bleibt wie bisher auf gemeinsamer Y_TOP
             if (i+1) not in drawn_top:
@@ -1227,8 +1248,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         top_left_1 = (x_start + left_clear, Y_TOP)         
         top_left_2 = (x_start + left_clear + L1 + p_w, Y_TOP)
 
-        yTopL = CLR_BOT + T1_ref
-        yTopR = CLR_BOT + T2_ref
+        baseL = _base_y(T1_ref)
+        baseR = _base_y(T2_ref)
+
+        oyL = baseL - CLR_BOT
+        oyR = baseR - CLR_BOT
+
+        yTopL = baseL + T1_ref         # statt CLR_BOT + T1_ref
+        yTopR = baseR + T2_ref     
 
         pass_x0 = x_start + left_clear + p_off              # statt + CLR_LR
         pass_x1 = pass_x0 + p_w
@@ -1237,8 +1264,10 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         pass_y1 = CLR_BOT + max(T1_R, T2_L)
 
         EPS_JOIN = 1e-3 # 1 mm Überlappung
-        x_inner_left  = x_start + left_clear
-        x_inner_right = x_inner_left + L1 + p_w + L2
+
+        x_inner_left = x_start + left_clear
+        x_inner_right = x_inner_left + L1
+        y_top = baseL + T1_ref
         y_inner_bot   = CLR_BOT
 
         # Flags: ob links/rechts nur eine "Verbindung" (ohne Durchstich) anliegt
@@ -1295,9 +1324,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         xSeamInner = x_start + left_clear + L1
         xStep = xSeamInner
 
-        x_inner_left  = x_start + left_clear
-        x_inner_right = x_inner_left + L1 + p_w + L2
-
         # links: von linker Innenkante bis zur Fuge
         msp.add_lwpolyline(
             [(x_inner_left,  CLR_BOT + T1_ref - T1_L),
@@ -1344,24 +1370,27 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # Innenkonturen links (mit Lücke am rechten Ende = Passbreite)
         gap_len_l = min(L1, max(0.0, p_w))
         gap_len_r = min(L2, max(0.0, p_w))
+
+        # links
         draw_trench_front_lr(
-            msp, origin_front1, L1, T1_ref,
-            clear_left=left_clear, clear_right=0.0, clear_bottom=CLR_BOT,
+            msp, (x_start, oyL), L1, T1_ref,
+            clear_left=left_clear, clear_right=0.0, clear_bottom=PASS_BOTTOM_GAP,  # NEU
             top_len_from_left=L1, gap_top_from_left=max(0.0, L1 - gap_len_l), gap_top_len=gap_len_l,
             draw_left_inner=not has_pass_left, draw_right_inner=False, draw_outer=False,
             depth_left=T1_L, depth_right=T1_R,
-            draw_bottom=False,            # <— NEU
+            draw_bottom=False,
         )
 
+        # rechts
         draw_trench_front_lr(
-            msp, origin_front2, L2, T2_ref,
-            clear_left=0.0, clear_right=right_clear, clear_bottom=CLR_BOT,
+            msp, (x_start + left_clear + L1 + p_w, oyR), L2, T2_ref,
+            clear_left=0.0, clear_right=right_clear, clear_bottom=PASS_BOTTOM_GAP,  # NEU
             top_clip_left=0.0, gap_top_from_left=0.0, gap_top_len=gap_len_r,
             draw_left_inner=False, draw_right_inner=not has_pass_right, draw_outer=False,
             depth_left=T2_L, depth_right=T2_R,
-            draw_bottom=False,            # <— NEU
+            draw_bottom=False,
         )
-
+        
         # Oberflächen links/rechts nur einmal je Graben
         seg_list_L = _surfaces_for_trench(surfaces, i+1)
         if seg_list_L and (i+1) not in drawn_surface:
@@ -1605,27 +1634,26 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         def _lerp(a, b, t): 
             return a + (b - a) * t
 
-        def _y_outer_on_left(x):
-            denom = max(1e-9, (xStep - xL))
-            t = (x - xL) / denom
-            # Außenboden = T1_ref - Tiefe (kein CLR_BOT)
-            return (T1_ref - _lerp(T1_L, T1_R, t))
-
         def _y_inner_on_left(x):
             denom = max(1e-9, (xSeamInner - x_inner_left))
             t = (x - x_inner_left) / denom
             # Innenboden = CLR_BOT + (T1_ref - Tiefe)
             return (CLR_BOT + (T1_ref - _lerp(T1_L, T1_R, t)))
 
-        def _y_outer_on_right(x):
-            denom = max(1e-9, (xR - xStep))
-            t = (x - xStep) / denom
-            return (T2_ref - _lerp(T2_L, T2_R, t))
-
         def _y_inner_on_right(x):
             denom = max(1e-9, (x_inner_right - xRightStart))
             t = (x - xRightStart) / denom
             return (CLR_BOT + (T2_ref - _lerp(T2_L, T2_R, t)))
+
+        def _y_outer_on_left(x):
+            denom = max(1e-9, (xStep - xL))
+            t = (x - xL) / denom
+            return CLR_BOT + (T1_ref - _lerp(T1_L, T1_R, t))
+
+        def _y_outer_on_right(x):
+            denom = max(1e-9, (xR - xStep))
+            t = (x - xStep) / denom
+            return CLR_BOT + (T2_ref - _lerp(T2_L, T2_R, t))
 
         # 1) Boden-BAND links (zwischen Innenboden und Außenboden, folgt der Schräge)
         #    x-Bereich: von linker Innenkante bis zur Fuge
@@ -1742,15 +1770,19 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                                     dxfattribs={"layer": LAYER_TRENCH_IN})
 
         # Außenlinie unten: links (BG i) und rechts (BG i+1) jeweils schräg
-        yBot_L0 = (T1_ref - T1_L)
-        yBot_L1 = (T1_ref - T1_R)
-        yBot_R0 = (T2_ref - T2_L)
-        yBot_R1 = (T2_ref - T2_R)
+        yBot_L0 = CLR_BOT + (T1_ref - T1_L)
+        yBot_L1 = CLR_BOT + (T1_ref - T1_R)
+        yBot_R0 = CLR_BOT + (T2_ref - T2_L)
+        yBot_R1 = CLR_BOT + (T2_ref - T2_R)
 
+        yA = CLR_BOT + (T1_ref - T1_R)
+        yB = CLR_BOT + (T2_ref - T2_L)
+
+        # Außenlinie unten zeichnen (nutzt nun die korrigierten yBot_*):
         msp.add_lwpolyline([(xL,   yBot_L0), (xStep, yBot_L1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
         msp.add_lwpolyline([(xStep, yBot_R0), (xR,    yBot_R1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # Außen-Vertikalen vom jeweiligen Außenboden bis zur Decke
+        # Außen-Vertikalen (unteres y hat jetzt ebenfalls CLR_BOT eingerechnet):
         if not has_pass_left:
             msp.add_lwpolyline([(xL, yBot_L0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
         if not has_pass_right:
@@ -1767,31 +1799,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if (i+2) not in printed_trench:
             _append_trench_line(aufmass, i+2, L2, B2, T2_ref, T2_L, T2_R)
             printed_trench.add(i+2)
-
-        # --- Tiefenmaße im Merge (Durchstich ODER Verbindung) ----------------------
-        def _add_depth_dim(x_col, y_top, depth, base_x):
-            msp.add_linear_dim(
-                base=(base_x, CLR_BOT),
-                p1=(x_col, y_top),
-                p2=(x_col, y_top - depth),
-                angle=90,
-                override=DIM_OVERRIDE,
-                dxfattribs={"layer": LAYER_TRENCH_OUT},
-            ).render()
-
-        def _same(a, b, eps=1e-6):
-            return abs(float(a) - float(b)) < eps
-
-        # Links (BG i+1): nur wenn noch nicht bemaßt
-        if (i+1) not in printed_depth:
-            if _same(T1_L, T1_R):
-                # gleiche Tiefe -> eine Maßkette (außen links)
-                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
-            else:
-                # unterschiedliche Tiefe -> zwei Maßketten
-                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
-                _add_depth_dim(xSeamInner,   yTopL, T1_R, xSeamInner   - DIM_OFFSET_FRONT)
-            printed_depth.add(i+1)
 
         # Rechts (BG i+2): nur wenn noch nicht bemaßt
         if (i+2) not in printed_depth:

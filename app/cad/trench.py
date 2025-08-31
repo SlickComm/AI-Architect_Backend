@@ -55,6 +55,7 @@ def draw_trench_front(
     yOBR = yBR - clearance_bottom   # Außenboden rechts
 
     EPS = 1e-6  # 1 µm reicht; nur top-Kante entkoppeln
+    same_depth = abs(dL - dR) < EPS  
 
     inner = [(x0, yBL), (x1, yBR), (x1, y_top - EPS), (x0, y_top - EPS)]
     msp.add_lwpolyline(inner, close=True, dxfattribs={"layer": LAYER_TRENCH_IN})
@@ -68,23 +69,26 @@ def draw_trench_front(
     msp.add_lwpolyline(outer, close=True, dxfattribs={"layer": LAYER_TRENCH_OUT})
 
     # Längenmaß (unten)
-    msp.add_linear_dim(
-        base=(x0, yb - DIM_OFFSET_FRONT),
-        p1=(x0, yb), p2=(x1, yb), angle=0,
-        override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
-    ).render()
+    # msp.add_linear_dim(
+    #     base=(x0, yb - DIM_OFFSET_FRONT),
+    #     p1=(x0, yb), p2=(x1, yb), angle=0,
+    #     override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
+    # ).render()
 
     # Längenmaß bleibt, Tiefenmaße von Decke nach unten:
-    msp.add_linear_dim(  # links
+    msp.add_linear_dim(
         base=(x0 - DIM_OFFSET_FRONT, yb),
         p1=(x0, y_top), p2=(x0, yBL), angle=90,
         override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
     ).render()
-    msp.add_linear_dim(  # rechts
-        base=(x1 + DIM_OFFSET_FRONT, yb),
-        p1=(x1, y_top), p2=(x1, yBR), angle=90,
-        override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
-    ).render()
+
+    # rechts NUR wenn die Tiefe dort anders ist
+    if not same_depth:
+        msp.add_linear_dim(
+            base=(x1 + DIM_OFFSET_FRONT, yb),
+            p1=(x1, y_top), p2=(x1, yBR), angle=90,
+            override=_dim_style(), dxfattribs={"layer": LAYER_TRENCH_OUT}
+        ).render()
 
     # Schraffur = outer - inner
     hatch = msp.add_hatch(color=4, dxfattribs={"layer": LAYER_HATCH})
