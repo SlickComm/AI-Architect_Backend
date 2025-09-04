@@ -1220,190 +1220,83 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             continue
 
         # --------------------------------------------------
-        # B) Durchstich zwischen i und i+1 (Merge-Zeichnung)
+        # B) Verbindung/Durchstich zwischen i und i+1 (Merge-Zeichnung)
         # --------------------------------------------------
         bg2 = trenches[i+1]
         L2 = float(bg2.get("length", 0) or 0)
         B2 = float(bg2.get("width", 0) or 0)
-        T2_ref, T2_L, T2_R = _depths(bg2) 
+        T2_ref, T2_L, T2_R = _depths(bg2)
 
-        join_only = (pas is None) and ((i+1) in join_set)
-        if not join_only and "length" not in pas:
+        # Gibt es an der Naht nur eine Verbindung (ohne Durchstich)?
+        join_only = (_pass_for_between(passes, i+1) is None) and ((i+1) in join_set)
+        pas = None if join_only else _pass_for_between(passes, i+1)
+        if not join_only and (not pas or "length" not in pas):
             raise HTTPException(400, "Durchstich ohne Länge (erwarte Feld 'length').")
-        p_w = 0.0 if join_only else float(pas["length"])
-        p_off = L1  # Start direkt an der Naht (Innenkante BG1)
+        p_w  = 0.0 if join_only else float(pas["length"])
+        p_off = L1  # Pass startet direkt an der Naht (Innenkante BG1)
 
-        # Gibt es neben dem aktuellen Merge noch weitere Durchstiche?
+        # Cluster-Kontext (Nachbarn links/rechts?)
         has_pass_left  = (i > 0) and _has_link_between(i)
         has_pass_right = (i+2 < len(trenches)) and _has_link_between(i+2)
 
-        left_clear  = 0.0 if has_pass_left  else CLR_LR   # links nur am Clusteranfang
-        right_clear = 0.0 if has_pass_right else CLR_LR   # rechts nur am Clusterende
+        left_clear  = 0.0 if has_pass_left  else CLR_LR
+        right_clear = 0.0 if has_pass_right else CLR_LR
 
-        # Kombilängen & Positionen (alle relativ zu x_start)
-        L_combo = L1 + p_w + L2
-        xL = x_start
-        xR = x_start + left_clear + L_combo + right_clear
-
-        top_left_1 = (x_start + left_clear, Y_TOP)         
-        top_left_2 = (x_start + left_clear + L1 + p_w, Y_TOP)
-
+        # Geometrie / Koordinaten (gemeinsame Oberkante)
         baseL = _base_y(T1_ref)
         baseR = _base_y(T2_ref)
+        yTopL = baseL + T1_ref
+        yTopR = baseR + T2_ref
 
-        oyL = baseL - CLR_BOT
-        oyR = baseR - CLR_BOT
+        xL            = x_start
+        x_inner_left  = x_start + left_clear
+        xSeam         = x_inner_left + L1                     # Naht (Innenkante BG1 rechts)
+        xRightStart   = xSeam + p_w                           # Start der rechten Innenkante (ggf. nach Pass)
+        x_inner_right = xRightStart + L2
+        xR            = x_inner_right + right_clear
 
-        yTopL = baseL + T1_ref         # statt CLR_BOT + T1_ref
-        yTopR = baseR + T2_ref     
+        # -----------------------------
+        # Draufsichten (nur bei reiner Verbindung an der Naht clippen)
+        # -----------------------------
+        top_left_1 = (x_inner_left, Y_TOP)
+        top_left_2 = (xRightStart,  Y_TOP)
 
-        pass_x0 = x_start + left_clear + p_off              # statt + CLR_LR
-        pass_x1 = pass_x0 + p_w
-
-        pass_y0_clip = CLR_BOT + PASS_BOTTOM_GAP
-        pass_y1 = CLR_BOT + max(T1_R, T2_L)
-
-        EPS_JOIN = 1e-3 # 1 mm Überlappung
-
-        x_inner_left = x_start + left_clear
-        x_inner_right = x_inner_left + L1
-        y_top = baseL + T1_ref
-        y_inner_bot   = CLR_BOT
-
-        # Flags: ob links/rechts nur eine "Verbindung" (ohne Durchstich) anliegt
         join_L = _is_join_only(i) if i > 0 else False
-        join_M = True                    # zwischen i und i+1 gibt es auf jeden Fall eine Naht
+        join_M = True
         join_R = _is_join_only(i + 2) if (i + 2) < len(trenches) else False
 
-        DIM_OVERRIDE = {
-            "dimtxt": DIM_TXT_H,
-            "dimclrd": 3,
-            "dimexe": DIM_EXE_OFF,
-            "dimexo": DIM_EXE_OFF,
-            "dimtad": 0,
-        }
-
-        # Obere Segmente, über der Passage geclippt
-        def add_outer_line_clipped(p1, p2):
-            (x1, y1), (x2, y2) = p1, p2
-            if abs(y1 - y2) < 1e-9:
-                xa, xb = (x1, x2) if x1 <= x2 else (x2, x1)
-                if pass_x0 > xa:
-                    msp.add_lwpolyline([(xa, y1), (min(pass_x0, xb), y1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-                if xb > pass_x1:
-                    msp.add_lwpolyline([(max(pass_x1, xa), y1), (xb, y1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-                return
-            if abs(x1 - x2) < 1e-9:
-                ya, yb = (y1, y2) if y1 <= y2 else (y2, y1)
-                if pass_y0_clip > ya:
-                    msp.add_lwpolyline([(x1, ya), (x1, min(pass_y0_clip, yb))], dxfattribs={"layer": LAYER_TRENCH_OUT})
-                if yb > pass_y1:
-                    msp.add_lwpolyline([(x1, max(pass_y1, ya)), (x1, yb)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-                return
-            msp.add_lwpolyline([p1, p2], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        def _y_on_segment(xa, ya, xb, yb, x):
-            if abs(xb - xa) < 1e-9: return ya
-            t = (x - xa) / (xb - xa)
-            return ya + t * (yb - ya)
-
-        def add_outer_top_slope_clipped(xa, ya, xb, yb):
-            if xb < xa: xa, xb, ya, yb = xb, xa, yb, ya
-            # links vom Pass
-            if pass_x0 > xa:
-                xm = min(pass_x0, xb)
-                ym = _y_on_segment(xa, ya, xb, yb, xm)
-                msp.add_lwpolyline([(xa, ya), (xm, ym)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            # rechts vom Pass
-            if xb > pass_x1:
-                xm = max(pass_x1, xa)
-                ym = _y_on_segment(xa, ya, xb, yb, xm)
-                msp.add_lwpolyline([(xm, ym), (xb, yb)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Obere Deckensegmente (wie gehabt geclippt über der Passage)
-        xSeamInner = x_start + left_clear + L1
-        xStep = xSeamInner
-
-        # links: von linker Innenkante bis zur Fuge
-        msp.add_lwpolyline(
-            [(x_inner_left,  CLR_BOT + T1_ref - T1_L),
-            (xSeamInner,    CLR_BOT + T1_ref - T1_R)],
-            dxfattribs={"layer": LAYER_TRENCH_IN},
-        )
-
-        # rechts: von Fuge (+Passbreite bei Durchstich) bis rechte Innenkante
-        xRightStart = xSeamInner + (0.0 if join_only else p_w)
-        msp.add_lwpolyline(
-            [(xRightStart,   CLR_BOT + T2_ref - T2_L),
-            (x_inner_right, CLR_BOT + T2_ref - T2_R)],
-            dxfattribs={"layer": LAYER_TRENCH_IN},
-        )
-
-        if join_only:
-            EPS = 1e-4
-
-            # Draufsicht: senkrechte Naht an der Fuge
-            x_seam = x_start + left_clear + L1
-            y_top_L = Y_TOP + B1
-            y_top_R = Y_TOP + B2
-            msp.add_lwpolyline(
-                [(x_seam, min(y_top_L, y_top_R) - EPS),
-                (x_seam, max(y_top_L, y_top_R) + EPS)],
-                dxfattribs={"layer": LAYER_TRENCH_OUT}
+        if (i + 1) not in drawn_top:
+            draw_trench_top(
+                msp, top_left_1, length=L1, width=B1,
+                clip_left=(join_L and join_only),
+                clip_right=(join_M and join_only),
+                dim_right=False
             )
+            drawn_top.add(i + 1)
 
-            # Vorderansicht: obere Außenkontur + Stufe an der Naht
-            msp.add_lwpolyline([(xL,   yTopL),           (xStep + EPS, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            msp.add_lwpolyline([(xR,   yTopR),           (xStep - EPS, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            msp.add_lwpolyline([(xStep, yTopR - EPS),    (xStep,      yTopL + EPS)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        else:
-            # horizontale Deckenlinks/-rechts + senkrechter Absatz an der Naht,
-            # jeweils geclippt über der Passage
-            add_outer_line_clipped((xL,   yTopL), (xStep, yTopL))
-            add_outer_line_clipped((xStep, yTopR), (xR,    yTopR))
-            add_outer_line_clipped((xStep, yTopR), (xStep, yTopL))
+        if (i + 2) not in drawn_top:
+            draw_trench_top(
+                msp, top_left_2, length=L2, width=B2,
+                clip_left=(join_M and join_only),
+                clip_right=(join_R and join_only),
+                dim_right=(i + 2 == len(trenches))
+            )
+            drawn_top.add(i + 2)
 
-        # Innenkonturen beider Gräben (mit Lücken am Pass)
-        origin_front1 = (x_start, 0.0)
-        origin_front2 = (x_start + left_clear + L1 + p_w, 0.0)
-
-        # Innenkonturen links (mit Lücke am rechten Ende = Passbreite)
-        gap_len_l = min(L1, max(0.0, p_w))
-        gap_len_r = min(L2, max(0.0, p_w))
-
-        # links
-        draw_trench_front_lr(
-            msp, (x_start, oyL), L1, T1_ref,
-            clear_left=left_clear, clear_right=0.0, clear_bottom=PASS_BOTTOM_GAP,  # NEU
-            top_len_from_left=L1, gap_top_from_left=max(0.0, L1 - gap_len_l), gap_top_len=gap_len_l,
-            draw_left_inner=not has_pass_left, draw_right_inner=False, draw_outer=False,
-            depth_left=T1_L, depth_right=T1_R,
-            draw_bottom=False,
-        )
-
-        # rechts
-        draw_trench_front_lr(
-            msp, (x_start + left_clear + L1 + p_w, oyR), L2, T2_ref,
-            clear_left=0.0, clear_right=right_clear, clear_bottom=PASS_BOTTOM_GAP,  # NEU
-            top_clip_left=0.0, gap_top_from_left=0.0, gap_top_len=gap_len_r,
-            draw_left_inner=False, draw_right_inner=not has_pass_right, draw_outer=False,
-            depth_left=T2_L, depth_right=T2_R,
-            draw_bottom=False,
-        )
-        
-        # Oberflächen links/rechts nur einmal je Graben
+        # -----------------------------
+        # Oberflächen (einmal je BG, an der Naht nur bei Verbindung clippen)
+        # -----------------------------
         seg_list_L = _surfaces_for_trench(surfaces, i+1)
         if seg_list_L and (i+1) not in drawn_surface:
             if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_L):
                 draw_surface_top_segments(
-                    msp,
-                    trench_top_left=top_left_1,
-                    trench_length=L1, trench_width=B1,
-                    segments=[{"length": float(s.get("length", 0) or 0),
-                            "offset": float(s.get("offset", 0) or 0),
-                            "material": s.get("material", "")} for s in seg_list_L],
+                    msp, trench_top_left=top_left_1, trench_length=L1, trench_width=B1,
+                    segments=[{
+                        "length":  float(s.get("length", 0) or 0),
+                        "offset":  float(s.get("offset", 0) or 0),
+                        "material": s.get("material", "")
+                    } for s in seg_list_L],
                     add_dims=True,
-                    # >>> Nur bei reiner Verbindung clippen:
                     clip_left=(join_L and join_only),
                     clip_right=(join_M and join_only),
                 )
@@ -1415,19 +1308,15 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offL = float(seg_list_L[0].get("offset", 0) or 0)
                 if offL:
                     draw_surface_top(
-                        msp,
-                        trench_top_left=top_left_1,
-                        trench_length=L1, trench_width=B1,
+                        msp, trench_top_left=top_left_1, trench_length=L1, trench_width=B1,
                         offset=offL,
                         clip_left=(join_L and join_only),
                         clip_right=(join_M and join_only),
                         material_text=f"Oberfläche: {seg_list_L[0].get('material','')}",
                     )
                     matL = seg_list_L[0].get("material","")
-                    len_total_L = L1 + 2*offL
-                    width_total_L = B1 + 2*offL
                     aufmass.append(
-                        f"Oberfläche {i+1}: Randzone={offL} m  l={len_total_L} m  b={width_total_L} m"
+                        f"Oberfläche {i+1}: Randzone={offL} m  l={L1+2*offL} m  b={B1+2*offL} m"
                         + (f"  Material={matL}" if matL else "")
                     )
             drawn_surface.add(i+1)
@@ -1436,14 +1325,13 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if seg_list_R and (i+2) not in drawn_surface:
             if any(float(s.get("length", 0) or 0) > 0 for s in seg_list_R):
                 draw_surface_top_segments(
-                    msp,
-                    trench_top_left=top_left_2,
-                    trench_length=L2, trench_width=B2,
-                    segments=[{"length": float(s.get("length", 0) or 0),
-                            "offset": float(s.get("offset", 0) or 0),
-                            "material": s.get("material", "")} for s in seg_list_R],
+                    msp, trench_top_left=top_left_2, trench_length=L2, trench_width=B2,
+                    segments=[{
+                        "length":  float(s.get("length", 0) or 0),
+                        "offset":  float(s.get("offset", 0) or 0),
+                        "material": s.get("material", "")
+                    } for s in seg_list_R],
                     add_dims=True,
-                    # >>> Nur bei reiner Verbindung clippen:
                     clip_left=(join_M and join_only),
                     clip_right=(join_R and join_only),
                 )
@@ -1455,55 +1343,213 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offR = float(seg_list_R[0].get("offset", 0) or 0)
                 if offR:
                     draw_surface_top(
-                        msp,
-                        trench_top_left=top_left_2,
-                        trench_length=L2, trench_width=B2,
+                        msp, trench_top_left=top_left_2, trench_length=L2, trench_width=B2,
                         offset=offR,
                         clip_left=(join_M and join_only),
                         clip_right=(join_R and join_only),
                         material_text=f"Oberfläche: {seg_list_R[0].get('material','')}",
                     )
                     matR = seg_list_R[0].get("material","")
-                    len_total_R = L2 + 2*offR
-                    width_total_R = B2 + 2*offR
                     aufmass.append(
-                        f"Oberfläche {i+2}: Randzone={offR} m  l={len_total_R} m  b={width_total_R} m"
+                        f"Oberfläche {i+2}: Randzone={offR} m  l={L2+2*offR} m  b={B2+2*offR} m"
                         + (f"  Material={matR}" if matR else "")
                     )
             drawn_surface.add(i+2)
 
-        # links (i+1)
-        if (i + 1) not in drawn_top:
-            draw_trench_top(
-                msp, top_left_1, length=L1, width=B1,
-                clip_left=(join_L and join_only),
-                clip_right=(join_M and join_only),
-                dim_right=False
-            )
-            drawn_top.add(i + 1)
+        # -----------------------------
+        # INNENKONTUREN (ohne Basislinie)
+        # -----------------------------
+        # links
+        draw_trench_front_lr(
+            msp, (x_start, baseL - CLR_BOT), L1, T1_ref,
+            clear_left=left_clear, clear_right=0.0,
+            draw_left_inner=not has_pass_left, draw_right_inner=False,
+            draw_outer=False,   # <— war True
+            draw_bottom=False,
+            depth_left=T1_L, depth_right=T1_R
+        )
 
-        # rechts (i+2)
-        if (i + 2) not in drawn_top:
-            draw_trench_top(
-                msp, top_left_2, length=L2, width=B2,
-                clip_left=(join_M and join_only),
-                clip_right=(join_R and join_only),
-                dim_right=(i + 2 == len(trenches))  
-            )
-            drawn_top.add(i + 2)
+        # rechts
+        draw_trench_front_lr(
+            msp, (xRightStart, baseR - CLR_BOT), L2, T2_ref,
+            clear_left=0.0, clear_right=right_clear,
+            draw_left_inner=False, draw_right_inner=not has_pass_right,
+            draw_outer=False,   # <— war True
+            draw_bottom=False,
+            depth_left=T2_L, depth_right=T2_R
+        )
 
-        # --- Rohr über den gesamten Cluster ziehen (nur am linken Cluster-Anfang) ---
+        # --- Innenbodenlinien (immer, auch bei Verbindung ohne Durchstich) ---
+        msp.add_lwpolyline([(x_inner_left, baseL),  (xSeam, baseL)],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
+        msp.add_lwpolyline([(xSeam, baseR), (x_inner_right, baseR)],
+                            dxfattribs={"layer": LAYER_TRENCH_IN})
+
+        # Innere Verbindung (Stufe innen) am Nahtpunkt
+        if abs(baseL - baseR) > 1e-9:
+            msp.add_lwpolyline(
+                [(xSeam, min(baseL, baseR)), (xSeam, max(baseL, baseR))],
+                dxfattribs={"layer": LAYER_TRENCH_IN},
+            )
+
+        # -----------------------------
+        # AUSSENKONTUR (einmal, mit Stufe)
+        # -----------------------------
+        # Innenboden (Referenz)
+        y_in_L = baseL + (T1_ref - T1_L)
+        y_in_R = baseR + (T2_ref - T2_R)
+
+        # Unterer Außenrand = Innenboden - CLR_BOT
+        y_out_L = y_in_L - CLR_BOT
+        y_out_R = y_in_R - CLR_BOT
+
+        # Richtung der Außenstufe:
+        # - join_only: Stufe an der Naht; Versatz horizontal um CLR_LR
+        # - Wenn rechts tiefer (y_out_R < y_out_L), nach links versetzen (-CLR_LR)
+        # - Wenn links tiefer oder gleich, nach rechts versetzen (+CLR_LR)
+        step_dir = 0.0
+        if join_only:
+            step_dir = (CLR_LR if (y_out_L <= y_out_R + 1e-9) else -CLR_LR)
+
+        x_step_out = xSeam + step_dir  # X-Position der Außen-Stufenvertikalen
+
+        # OBERKANTE außen
+        msp.add_lwpolyline([(xL, yTopL), (x_step_out, yTopL)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+        if not has_pass_right:
+            msp.add_lwpolyline([(xRightStart + step_dir, yTopR), (xR, yTopR)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # UNTERKANTE außen
+        msp.add_lwpolyline([(xL, y_out_L), (x_step_out, y_out_L)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+        if not has_pass_right:
+            msp.add_lwpolyline([(xRightStart + step_dir, y_out_R), (xR, y_out_R)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Vertikale der Außenstufe genau auf x_step_out
+        if abs(y_out_L - y_out_R) > 1e-9:
+            y_hi = max(y_out_L, y_out_R)
+            y_lo = min(y_out_L, y_out_R)
+            msp.add_lwpolyline([(x_step_out, y_lo), (x_step_out, y_hi)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Außen-Vertikalen nur ganz links/rechts
         if not has_pass_left:
-            # Spanne nach rechts bis kein weiterer Durchstich mehr kommt
+            msp.add_lwpolyline([(xL, y_out_L), (xL, yTopL)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+        if not has_pass_right:
+            msp.add_lwpolyline([(xR, y_out_R), (xR, yTopR)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # -----------------------------
+        # RAND-SCHRAFFUR (Verbindung)
+        # -----------------------------
+        def _hatch_poly(pts):
+            h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
+            angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
+            h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE, angle=angle)
+            cx = sum(p[0] for p in pts)/len(pts); cy = sum(p[1] for p in pts)/len(pts)
+            try: h.set_pattern_origin((cx, cy))
+            except AttributeError: pass
+            h.paths.add_polyline_path(pts, is_closed=True)
+
+        # --- Innen-/Außenboden-Niveaus LINKS/RECHTS (jeweils am Rand bzw. an der Naht)
+        y_in_L_left   = baseL + (T1_ref - T1_L)
+        y_in_L_right  = baseL + (T1_ref - T1_R)
+        y_out_L_left  = y_in_L_left  - CLR_BOT
+        y_out_L_right = y_in_L_right - CLR_BOT
+
+        y_in_R_left   = baseR + (T2_ref - T2_L)
+        y_in_R_right  = baseR + (T2_ref - T2_R)
+        y_out_R_left  = y_in_R_left  - CLR_BOT
+        y_out_R_right = y_in_R_right - CLR_BOT
+
+        # --- Seitenbänder bis zum Außenboden: füllt die Ecken mit
+        if left_clear > 1e-9:
+            _hatch_poly([
+                (x_start,            y_out_L_left),
+                (x_start+left_clear, y_out_L_left),
+                (x_start+left_clear, yTopL),
+                (x_start,            yTopL),
+            ])
+
+        if right_clear > 1e-9:
+            _hatch_poly([
+                (xR - right_clear, y_out_R_right),
+                (xR,               y_out_R_right),
+                (xR,               yTopR),
+                (xR - right_clear, yTopR),
+            ])
+
+        # --- Bodenband links (immer dieses Teilstück)
+        _hatch_poly([
+            (x_inner_left, y_out_L_left),
+            (xSeam,        y_out_L_right),
+            (xSeam,        y_in_L_right),
+            (x_inner_left, y_in_L_left),
+        ])
+
+        # --- Bodenband rechts (nur am rechten Cluster-Ende)
+        if not has_pass_right:
+            _hatch_poly([
+                (xSeam,         y_out_R_left),
+                (x_inner_right, y_out_R_right),
+                (x_inner_right, y_in_R_right),
+                (xSeam,         y_in_R_left),
+            ])
+
+        # --- Stufenband an der Naht (füllt die Lücke in der Stufe)
+        #     Rechteck zwischen Innen-Stufenvertikaler (xSeam) und der Außenstufe (x_step_out)
+        if join_only and abs(y_out_L_right - y_out_R_left) > 1e-9:
+            x0 = min(xSeam, x_step_out)
+            x1 = max(xSeam, x_step_out)
+            y_lo = min(y_out_L_right, y_out_R_left)
+            y_hi = max(y_out_L_right, y_out_R_left)
+            _hatch_poly([(x0, y_lo), (x1, y_lo), (x1, y_hi), (x0, y_hi)])
+
+        # -----------------------------
+        # Durchstich (nur wenn vorhanden) + Basislinie/Hatch NUR dann
+        # -----------------------------
+        if not join_only:
+            # Pass-Schraffur
+            draw_pass_front(
+                msp,
+                trench_origin=(x_start, 0.0),
+                trench_len=L1 + p_w + L2,
+                trench_depth=max(T1_ref, T2_ref),
+                width=p_w,
+                offset=p_off,
+                clearance_left=left_clear,
+                clearance_bottom=CLR_BOT,
+                pattern=pas.get("pattern", HATCH_PATTERN),
+                hatch_scale=HATCH_SCALE,
+                seed_point=(0.0, 0.0),
+            )
+            # Basislinie unten (links – Pass – rechts)
+            if left_clear <= 1e-12:
+                xa, xb = x_inner_left, xSeam
+                if xb - xa > 1e-9:
+                    msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
+            if p_w > 1e-9:
+                msp.add_lwpolyline([(xSeam, CLR_BOT), (xRightStart, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
+            if right_clear <= 1e-12:
+                xa, xb = xRightStart, x_inner_right
+                if xb - xa > 1e-9:
+                    msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
+
+        # -----------------------------
+        # Rohr(e)
+        # -----------------------------
+        # durchgehendes Rohr über Cluster nur am linken Cluster-Anfang
+        if not has_pass_left:
             L_span = 0.0
-            last_idx = i  # 0-basierter Index des rechten, letzten Grabens im Cluster
+            last_idx = i
             for idx in range(i, len(trenches)):
                 L_span += float(trenches[idx]["length"])
-                # Gibt es zwischen idx (1-basig: idx+1) und idx+1 (1-basig: idx+2) noch einen Durchstich?
                 if idx + 1 < len(trenches):
-                    seam = idx + 1  # 1-basiert
+                    seam = idx + 1
                     if seam in join_set:
-                        # Verbindung → keine Zusatzlänge, aber Cluster geht weiter
                         last_idx = idx + 1
                         continue
                     p_next = _pass_for_between(passes, seam)
@@ -1511,30 +1557,26 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         L_span += float(p_next["length"])
                         last_idx = idx + 1
                         continue
-                # kein weiterer Durchstich → Cluster endet hier
                 last_idx = idx
                 break
-            
             pipe_src = None
             for k in range(i, last_idx + 1):
                 cand = _first_pipe_for_trench(pipes, k + 1)
-                if not cand:
-                    continue
-                cand_full, _ = _pipe_full_and_want(cand)  # behandelt auch fehlende/0-Länge als "voll"
-                if cand_full:
-                    pipe_src = cand
-                    break
-            # 3) Durchgehendes Rohr zeichnen
+                if cand:
+                    full, _ = _pipe_full_and_want(cand)
+                    if full:
+                        pipe_src = cand
+                        break
             if pipe_src:
                 d   = float(pipe_src.get("diameter", 0) or 0)
                 off = float(pipe_src.get("offset", 0) or 0.0)
                 if d > 0:
                     eff = draw_pipe_front(
                         msp,
-                        origin_front=(x_start + left_clear, CLR_BOT),  # Innenkante ganz links im Cluster
+                        origin_front=(x_inner_left, CLR_BOT),
                         trench_inner_length=L_span,
                         diameter=d,
-                        span_length=None,   # volle nutzbare Länge
+                        span_length=None,
                         offset=off,
                     )
                     if eff > 0:
@@ -1542,281 +1584,67 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         for k in range(i, last_idx + 1):
                             drawn_pipe.add(k + 1)
 
-        # Linker Graben i+1
+        # Einzelrohre links/rechts (falls nötig)
         pipeL = _first_pipe_for_trench(pipes, i+1)
         if pipeL and (i+1) not in drawn_pipe:
             dL = float(pipeL.get("diameter", 0) or 0)
             if dL > 0:
                 offL = float(pipeL.get("offset", 0) or 0.0)
                 fullL, wantL = _pipe_full_and_want(pipeL)
-                if not fullL and float(pipeL.get("length") or 0) <= 0:
-                    raise HTTPException(400, f"Rohr in BG {i+1}: Länge fehlt.")
-                wantL = None if fullL else float(pipeL.get("length"))
                 effL = draw_pipe_front(
-                    msp,
-                    origin_front=(x_start + left_clear, CLR_BOT),  # Innenkante BG i+1
-                    trench_inner_length=L1,
-                    diameter=dL,
-                    span_length=wantL,
+                    msp, origin_front=(x_inner_left, CLR_BOT),
+                    trench_inner_length=L1, diameter=dL,
+                    span_length=(None if fullL else float(pipeL.get("length"))),
                     offset=offL,
                 )
                 if effL > 0:
-                    aufmass.append(
-                        f"Rohr {i+1}: l={effL} m  Ø={dL} m" + (f"  Versatz={offL} m" if offL else "")
-                    )
+                    aufmass.append(f"Rohr {i+1}: l={effL} m  Ø={dL} m" + (f"  Versatz={offL} m" if offL else ""))
                     drawn_pipe.add(i+1)
 
-        # Rechter Graben i+2
         pipeR = _first_pipe_for_trench(pipes, i+2)
         if pipeR and (i+2) not in drawn_pipe:
             dR = float(pipeR.get("diameter", 0) or 0)
             if dR > 0:
                 offR = float(pipeR.get("offset", 0) or 0.0)
                 fullR, wantR = _pipe_full_and_want(pipeR)
-                if not fullR and float(pipeR.get("length") or 0) <= 0:
-                    raise HTTPException(400, f"Rohr in BG {i+2}: Länge fehlt.")
-                wantR = None if fullR else float(pipeR.get("length"))
                 effR = draw_pipe_front(
-                    msp,
-                    origin_front=(x_start + left_clear + L1 + p_w, CLR_BOT),  # Innenkante BG i+2
-                    trench_inner_length=L2,
-                    diameter=dR,
-                    span_length=wantR,
+                    msp, origin_front=(xRightStart, CLR_BOT),
+                    trench_inner_length=L2, diameter=dR,
+                    span_length=(None if fullR else float(pipeR.get("length"))),
                     offset=offR,
                 )
                 if effR > 0:
-                    aufmass.append(
-                        f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else "")
-                    )
-                    drawn_pipe.add(i+2)                
+                    aufmass.append(f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else ""))
+                    drawn_pipe.add(i+2)
 
-        # --- HATCH: Rand-Schraffur: Boden+links am Clusteranfang, rechts am Clusterende ---
-        def _hatch_rect(x0, y0, x1, y1):
-            w = x1 - x0; h = y1 - y0
-            if w <= 1e-9 or h <= 1e-9:
-                return
-            band = max(min(w, h), 1e-3)
-            angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
-            scale = min(HATCH_SCALE, band/2.0)
-            hobj = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
-            hobj.set_pattern_fill(HATCH_PATTERN, scale=scale, angle=angle)
-            ox = (x0+x1)*0.5; oy = (y0+y1)*0.5
-            try: hobj.set_pattern_origin((ox, oy))
-            except AttributeError: pass
-            hobj.paths.add_polyline_path([(x0,y0),(x1,y0),(x1,y1),(x0,y1)], is_closed=True)
+        # -----------------------------
+        # Tiefenmaß rechts
+        # -----------------------------
+        if (i+2) not in printed_depth:
+            if abs(T2_L - T2_R) < 1e-6:
+                _add_depth_dim(x_inner_right, yTopR, T2_R, x_inner_right + DIM_OFFSET_FRONT)
+            else:
+                _add_depth_dim(xSeam,         yTopR, T2_L, xSeam         + DIM_OFFSET_FRONT)
+                _add_depth_dim(x_inner_right, yTopR, T2_R, x_inner_right + DIM_OFFSET_FRONT)
+            printed_depth.add(i+2)
 
-        EPS = 1e-4
-
-        # # Geometrie für diesen Merge (gilt für beide Seiten)
-        x_left_outer  = x_start
-        x_left_inner  = x_start + left_clear
-        x_right_outer = x_start + left_clear + L1 + p_w + L2 + right_clear  # = xR
-        x_right_inner = x_right_outer - right_clear
-        T_right = T2_ref # Clusterende → rechter Graben dieses Merges
-
-        # --- HATCH: Rand-Schraffur: Boden folgt jetzt dem Gefälle -----------------
-        def _hatch_poly(pts):
-            # kleiner Guard
-            if len(pts) < 3:
-                return
-            h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
-            angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
-            h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE, angle=angle)
-            # Musterursprung ungefähr ins Zentrum
-            cx = sum(p[0] for p in pts)/len(pts)
-            cy = sum(p[1] for p in pts)/len(pts)
-            try:
-                h.set_pattern_origin((cx, cy))
-            except AttributeError:
-                pass
-            h.paths.add_polyline_path(pts, is_closed=True)
-
-        def _lerp(a, b, t): 
-            return a + (b - a) * t
-
-        def _y_inner_on_left(x):
-            denom = max(1e-9, (xSeamInner - x_inner_left))
-            t = (x - x_inner_left) / denom
-            # Innenboden = CLR_BOT + (T1_ref - Tiefe)
-            return (CLR_BOT + (T1_ref - _lerp(T1_L, T1_R, t)))
-
-        def _y_inner_on_right(x):
-            denom = max(1e-9, (x_inner_right - xRightStart))
-            t = (x - xRightStart) / denom
-            return (CLR_BOT + (T2_ref - _lerp(T2_L, T2_R, t)))
-
-        def _y_outer_on_left(x):
-            denom = max(1e-9, (xStep - xL))
-            t = (x - xL) / denom
-            return CLR_BOT + (T1_ref - _lerp(T1_L, T1_R, t))
-
-        def _y_outer_on_right(x):
-            denom = max(1e-9, (xR - xStep))
-            t = (x - xStep) / denom
-            return CLR_BOT + (T2_ref - _lerp(T2_L, T2_R, t))
-
-        # 1) Boden-BAND links (zwischen Innenboden und Außenboden, folgt der Schräge)
-        #    x-Bereich: von linker Innenkante bis zur Fuge
-        if xSeamInner - x_inner_left > 1e-9:
-            xA = x_inner_left
-            xB = xSeamInner
-            _hatch_poly([
-                (xA, _y_inner_on_left(xA)),   # oben links (Innenboden)
-                (xB, _y_inner_on_left(xB)),   # oben rechts
-                (xB, _y_outer_on_left(xB)),   # unten rechts (Außenboden)
-                (xA, _y_outer_on_left(xA)),   # unten links
-            ])
-
-        # 2) Boden-BAND rechts
-        #    x-Bereich: von Fuge (+Passbreite) bis rechte Innenkante
-        if x_inner_right - xRightStart > 1e-9:
-            xA = xRightStart
-            xB = x_inner_right
-            _hatch_poly([
-                (xA, _y_inner_on_right(xA)),
-                (xB, _y_inner_on_right(xB)),
-                (xB, _y_outer_on_right(xB)),
-                (xA, _y_outer_on_right(xA)),
-            ])
-
-        # 2a) Boden-BAND links im Randabstand (Außenkante -> Innenkante)
-        #     top = CLR_BOT, bottom = äußere Bodenlinie (mit Gefälle)
-        if left_clear > 1e-9:
-            xA = x_left_outer
-            xB = x_left_inner
-            _hatch_poly([
-                (xA, CLR_BOT),                 # obere Kante (konstant)
-                (xB, CLR_BOT),
-                (xB, _y_outer_on_left(xB)),    # untere Kante folgt der äußeren Bodenlinie
-                (xA, _y_outer_on_left(xA)),
-            ])
-
-        # 2b) Boden-BAND rechts im Randabstand (Innenkante -> Außenkante)
-        if right_clear > 1e-9:
-            xA = x_right_inner
-            xB = x_right_outer
-            _hatch_poly([
-                (xA, CLR_BOT),
-                (xB, CLR_BOT),
-                (xB, _y_outer_on_right(xB)),
-                (xA, _y_outer_on_right(xA)),
-            ])
-        
-        # 2c) Boden-BAND unter dem Durchstich (Brücke über die Passbreite)
-        #     Top = CLR_BOT, Bottom = äußere Bodenlinie an den Nahtpunkten
-        if (not join_only) and (pass_x1 - pass_x0 > 1e-12):
-            xA = xSeamInner          # linke Passkante
-            xB = xRightStart         # rechte Passkante (xSeamInner + p_w)
-
-            # äußere Bodenhöhe an den Passkanten (ohne CLR_BOT – wie unten bei yBot_*)
-            yA = (T1_ref - T1_R)     # links: Bodenhöhe am rechten Rand von BG1
-            yB = (T2_ref - T2_L)     # rechts: Bodenhöhe am linken Rand von BG2
-
-            _hatch_poly([
-                (xA, CLR_BOT),       # oben links = Basislinie
-                (xB, CLR_BOT),       # oben rechts
-                (xB, yB),            # unten rechts = äußere Bodenlinie rechts
-                (xA, yA),            # unten links  = äußere Bodenlinie links
-            ])
-
-        # 3) Linke Wand nur am Clusteranfang
-        if not has_pass_left:
-            _hatch_rect(
-                x_left_outer + EPS, CLR_BOT + EPS,
-                x_left_inner  - EPS, CLR_BOT + T1_ref - EPS
-            )
-
-        # 4) Rechte Wand nur am Clusterende
-        if not has_pass_right and right_clear > 2*EPS:
-            _hatch_rect(
-                x_right_inner + EPS, CLR_BOT + EPS,
-                x_right_outer - EPS, CLR_BOT + T_right - EPS
-            )
-
-        # Durchstich (Front)
-        if not join_only:
-            draw_pass_front(
-                msp,
-                trench_origin=origin_front1,
-                trench_len=L_combo,
-                trench_depth=max(T1_ref, T2_ref),
-                width=p_w,
-                offset=p_off,
-                clearance_left=left_clear,
-                clearance_bottom=CLR_BOT,
-                pattern=pas.get("pattern", "EARTH"),
-                hatch_scale=HATCH_SCALE,
-                seed_point=(0.0, 0.0),
-            )
-
-        # Basislinie unten (y = CLR_BOT)
-        # - Bei reiner Verbindung KEINE Linie (sonst stört sie die Gefälle-Darstellung).
-        # - Bei Durchstich: Linkes Stück, Brücke unter dem Pass, rechtes Stück.
-        if not join_only:
-            if left_clear <= 1e-12:
-                xa = x_inner_left - EPS_JOIN
-                xb = pass_x0 - EPS_JOIN
-                if xb - xa > 1e-9:
-                    msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)],
-                                    dxfattribs={"layer": LAYER_TRENCH_IN})
-            if pass_x1 - pass_x0 > 1e-9:
-                msp.add_lwpolyline([(pass_x0, CLR_BOT), (pass_x1, CLR_BOT)],
-                                dxfattribs={"layer": LAYER_TRENCH_IN})
-            if right_clear <= 1e-12:
-                xa = pass_x1 + EPS_JOIN
-                xb = x_inner_right + EPS_JOIN
-                if xb - xa > 1e-9:
-                    msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)],
-                                    dxfattribs={"layer": LAYER_TRENCH_IN})
-
-        # Außenlinie unten: links (BG i) und rechts (BG i+1) jeweils schräg
-        yBot_L0 = CLR_BOT + (T1_ref - T1_L)
-        yBot_L1 = CLR_BOT + (T1_ref - T1_R)
-        yBot_R0 = CLR_BOT + (T2_ref - T2_L)
-        yBot_R1 = CLR_BOT + (T2_ref - T2_R)
-
-        yA = CLR_BOT + (T1_ref - T1_R)
-        yB = CLR_BOT + (T2_ref - T2_L)
-
-        # Außenlinie unten zeichnen (nutzt nun die korrigierten yBot_*):
-        msp.add_lwpolyline([(xL,   yBot_L0), (xStep, yBot_L1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        msp.add_lwpolyline([(xStep, yBot_R0), (xR,    yBot_R1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Außen-Vertikalen (unteres y hat jetzt ebenfalls CLR_BOT eingerechnet):
-        if not has_pass_left:
-            msp.add_lwpolyline([(xL, yBot_L0), (xL, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        if not has_pass_right:
-            msp.add_lwpolyline([(xR, yBot_R1), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Aufmaß: Durchstich nur einmal je Naht, Baugräben nur einmal je Index
+        # Aufmaß (keine Durchstich-Zeile bei Verbindung)
+        if (i+1) not in printed_trench:
+            _append_trench_line(aufmass, i+1, L1, B1, T1_ref, T1_L, T1_R); printed_trench.add(i+1)
+        if (i+2) not in printed_trench:
+            _append_trench_line(aufmass, i+2, L2, B2, T2_ref, T2_L, T2_R); printed_trench.add(i+2)
         if not join_only:
             if (i+1) not in printed_pass:
                 aufmass.append(f"Durchstich {i+1}: l={p_w} m")
                 printed_pass.add(i+1)
-        if (i+1) not in printed_trench:
-            _append_trench_line(aufmass, i+1, L1, B1, T1_ref, T1_L, T1_R)
-            printed_trench.add(i+1)
-        if (i+2) not in printed_trench:
-            _append_trench_line(aufmass, i+2, L2, B2, T2_ref, T2_L, T2_R)
-            printed_trench.add(i+2)
 
-        # Rechts (BG i+2): nur wenn noch nicht bemaßt
-        if (i+2) not in printed_depth:
-            if _same(T2_L, T2_R):
-                # gleiche Tiefe -> eine Maßkette (außen rechts)
-                _add_depth_dim(x_inner_right, yTopR, T2_R, x_inner_right + DIM_OFFSET_FRONT)
-            else:
-                # unterschiedliche Tiefe -> zwei Maßketten
-                _add_depth_dim(xRightStart,   yTopR, T2_L, xRightStart   + DIM_OFFSET_FRONT)
-                _add_depth_dim(x_inner_right, yTopR, T2_R, x_inner_right + DIM_OFFSET_FRONT)
-            printed_depth.add(i+2)
-
-        # Bookkeeping:
+        # Bookkeeping / Cursor / Skip
         trench_origin_x[i]   = x_start
-        trench_origin_x[i+1] = x_start + left_clear + L1 + p_w # statt + CLR_LR
-        cursor_x = max(cursor_x, x_start + left_clear + L_combo + right_clear + GAP_BG)
-        skip_single_next = True   # rechter BG (i+1) ist bereits als Teil des Merges gezeichnet
-        i += 1                    # nur um 1 vorgehen, damit Naht (i+1)-(i+2) noch geprüft wird
+        trench_origin_x[i+1] = x_start + left_clear + L1
+        cursor_x = max(cursor_x, x_inner_right + right_clear + GAP_BG)
+        skip_single_next = True
+        i += 1
+        continue
 
     # ---------- Aufmaß-Block als MText ----------
     # Auto-Aufmaß falls kein manueller Block existiert
