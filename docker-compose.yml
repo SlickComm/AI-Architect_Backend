@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:80"
+    volumes:
+      - ./app:/app/app
+      - ./temp:/app/temp
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
