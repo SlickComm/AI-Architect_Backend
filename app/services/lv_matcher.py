@@ -10,13 +10,14 @@ from openai import AsyncOpenAI
 
 from app.services.lv_loader import load_lv
 
-from langsmith.wrappers import wrap_openai
+from langsmith.wrappers import OpenAIAgentsTracingProcessor
 
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
 
 # Langsmith-key
 LANGSMITH_TRACING = True
+LANGSMITH_ENDPOINT= "https://api.smith.langchain.com"
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT")
 
