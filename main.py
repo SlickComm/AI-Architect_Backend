@@ -37,7 +37,7 @@ app = FastAPI()
 load_dotenv()
 
 # Langsmith-key
-os.environ["LANGSMITH_TRACING"] = True
+os.environ["LANGSMITH_TRACING"] = "true"
 os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
 os.getenv("LANGSMITH_API_KEY")
 os.getenv("LANGSMITH_PROJECT")
