@@ -25,10 +25,11 @@ from langsmith.wrappers import wrap_openai
 load_dotenv()
 
 # Langsmith-key
-LANGSMITH_TRACING = True
-LANGSMITH_ENDPOINT= "https://api.smith.langchain.com"
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
-LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT")
+os.environ["LANGSMITH_TRACING"] = True
+os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
+os.getenv("LANGSMITH_API_KEY")
+os.getenv("LANGSMITH_PROJECT")
+os.environ["LANGSMITH_DEBUG"] = "true"
 
 
 # OpenAI-Key
