@@ -19,11 +19,21 @@ from app.invoices.builder       import make_invoice
 from app.services.lv_loader import load_lv
 from app.services.lv_matcher import best_matches_batch, parse_aufmass, _classify_line
 
+from langsmith.wrappers import wrap_openai
+
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
 
+# Langsmith-key
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
+os.getenv("LANGSMITH_API_KEY")
+os.getenv("LANGSMITH_PROJECT")
+os.environ["LANGSMITH_DEBUG"] = "true"
+
+
 # OpenAI-Key
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+async_client = wrap_openai(AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")))
 
 router = APIRouter()  
 
