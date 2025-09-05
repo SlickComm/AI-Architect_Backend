@@ -10,11 +10,18 @@ from openai import AsyncOpenAI
 
 from app.services.lv_loader import load_lv
 
+from langsmith.wrappers import wrap_openai
+
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
 
+# Langsmith-key
+LANGSMITH_TRACING = True
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_WORKSPACE_ID = os.getenv("LANGSMITH_WORKSPACE_ID")
+
 # OpenAI-Key
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+async_client = wrap_openai(AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")))
 
 CATALOG: List[Dict[str, Any]] = load_lv()
 
