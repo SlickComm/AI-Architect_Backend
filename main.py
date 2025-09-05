@@ -29,13 +29,24 @@ from app.routes import lv_routes
 
 from app.utils.session_manager import session_manager
 
+from langsmith.wrappers import wrap_openai
+
 app = FastAPI()
 
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
 
+# Langsmith-key
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
+os.getenv("LANGSMITH_API_KEY")
+os.getenv("LANGSMITH_PROJECT")
+os.environ["LANGSMITH_DEBUG"] = "true"
+
+
+
 # OpenAI-Key
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = wrap_openai(OpenAI(api_key=os.getenv("OPENAI_API_KEY")))
 
 # CORS, falls nötig
 app.add_middleware(
