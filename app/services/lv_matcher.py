@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 
 from app.services.lv_loader import load_lv
 
-from langsmith.wrappers import OpenAIAgentsTracingProcessor
+from langsmith.wrappers import wrap_openai
 
 # Lädt automatisch die .env-Datei aus dem aktuellen Verzeichnis
 load_dotenv()
