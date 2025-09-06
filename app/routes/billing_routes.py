@@ -33,7 +33,10 @@ os.environ["LANGSMITH_DEBUG"] = "true"
 
 
 # OpenAI-Key
-async_client = wrap_openai(AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+async_client = wrap_openai(AsyncOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://openrouter.ai/api/v1"
+))
 
 router = APIRouter()  
 
@@ -56,7 +59,7 @@ async def extract_dims_gpt(line: str) -> dict:
         "Antworte nur mit JSON, z.B. {\"L\": 5.0, \"B\": 1.0, \"T\": 2.0}"
     )
     resp = await async_client.chat.completions.create(
-        model            = "gpt-4o-mini",
+        model            = "openai/gpt-4o-mini",
         temperature      = 0.0,
         response_format  = {"type": "json_object"},
         messages = [

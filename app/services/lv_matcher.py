@@ -23,7 +23,10 @@ os.getenv("LANGSMITH_PROJECT")
 os.environ["LANGSMITH_DEBUG"] = "true"
 
 # OpenAI-Key
-async_client = wrap_openai(AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+async_client = wrap_openai(AsyncOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://openrouter.ai/api/v1"
+))
 
 CATALOG: List[Dict[str, Any]] = load_lv()
 
@@ -94,7 +97,7 @@ async def _match_line(line: str, hint: Dict[str, Any] | None = None) -> Dict[str
     )
 
     resp = await async_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         temperature=0.0,
         response_format={"type": "json_object"},
         messages=[{"role": "system", "content": SYSTEM_PROMPT},

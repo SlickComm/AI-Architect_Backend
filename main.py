@@ -46,7 +46,10 @@ os.environ["LANGSMITH_DEBUG"] = "true"
 
 
 # OpenAI-Key
-client = wrap_openai(OpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+client = wrap_openai(OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://openrouter.ai/api/v1",
+))
 
 # CORS, falls nötig
 app.add_middleware(
@@ -883,7 +886,7 @@ ANTWORTFORMAT  (genau so!)
 """
 
     resp = client.chat.completions.create(
-        model            = "gpt-3.5-turbo-0125",
+        model            = "openai/gpt-3.5-turbo-0125",
         response_format  = {"type": "json_object"},
         temperature      = 0.0,
         max_tokens       = 500,
@@ -1760,7 +1763,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
+            model="openai/gpt-3.5-turbo-0125",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": "You are a JSON API."},
@@ -1858,7 +1861,7 @@ ANTWORTFORMAT (exakt so!):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
+            model="openai/gpt-3.5-turbo-0125",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": "You are a JSON API."},
