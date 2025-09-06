@@ -886,7 +886,7 @@ ANTWORTFORMAT  (genau so!)
 """
 
     resp = client.chat.completions.create(
-        model            = "openai/codex-mini",
+        model            = "openai/gpt-3.5-turbo-instruct",
         response_format  = {"type": "json_object"},
         temperature      = 0.0,
         max_tokens       = 500,
@@ -1763,7 +1763,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
 
     try:
         response = client.chat.completions.create(
-            model="openai/codex-mini",
+            model="openai/gpt-3.5-turbo-instruct",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": "You are a JSON API."},
@@ -1861,7 +1861,7 @@ ANTWORTFORMAT (exakt so!):
 
     try:
         response = client.chat.completions.create(
-            model="openai/codex-mini",
+            model="openai/gpt-3.5-turbo-instruct",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": "You are a JSON API."},
