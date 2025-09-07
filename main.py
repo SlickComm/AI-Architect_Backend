@@ -1808,6 +1808,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     drawn_pipe.add(i+2)
 
         # -----------------------------
+        # Tiefenmaß links
+        # -----------------------------
+        if (i+1) not in printed_depth:
+            if abs(T1_L - T1_R) < 1e-6:
+                # einheitliche Tiefe – Maß außen links
+                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
+            else:
+                # Gefälle – zwei Maße, Basislinien nach links versetzen,
+                # damit sie sich am xSeam nicht mit den rechten Maßen überlappen
+                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
+                _add_depth_dim(xSeam,        yTopL, T1_R, xSeam        - DIM_OFFSET_FRONT)
+            printed_depth.add(i+1)
+
+        # -----------------------------
         # Tiefenmaß rechts
         # -----------------------------
         if (i+2) not in printed_depth:
