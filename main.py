@@ -1295,6 +1295,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             )
             drawn_top.add(i + 2)
 
+        # --- Nahtlinie in der Draufsicht (nur im NICHT-überlappenden Bereich) ---
+        # In der Überlappung (0 .. min(B1,B2)) gibt es KEINE Linie.
+        # Die Linie schließt nur die Stufe: min(B1,B2) .. max(B1,B2).
+        if join_only and abs(B1 - B2) > 1e-9:
+            y_lo = Y_TOP + min(B1, B2)
+            y_hi = Y_TOP + max(B1, B2)
+            if y_hi - y_lo > 1e-9:
+                msp.add_lwpolyline([(xSeam, y_lo), (xSeam, y_hi)],
+                                dxfattribs={"layer": LAYER_TRENCH_OUT})
+
         # -----------------------------
         # Oberflächen (einmal je BG, an der Naht nur bei Verbindung clippen)
         # -----------------------------
@@ -1450,20 +1460,178 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
         x_step_out = xSeam + step_dir
 
-        # OBERKANTE außen (unverändert)
-        msp.add_lwpolyline([(xL, yTopL), (x_step_out, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        if not has_pass_right:
-            msp.add_lwpolyline([(xRightStart + step_dir, yTopR), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+        # --- Oberkante außen: durchgängig, ohne Lücke -------------------------------
+        # Bei 'Verbindung' liegt die Außen-Stufe horizontal um CLR_LR versetzt.
+        # Nur dann muss die Oberkante beidseitig um 'step_dir' verschoben werden.
+        top_off = step_dir if join_only else 0.0
 
-        # UNTERKANTE außen – folgt jetzt dem Gefälle
-        # 1) linkes Randband (horizontal)
-        msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # 2) linke Innenstrecke bis zur Naht (schräg, falls T1_L != T1_R)
-        msp.add_lwpolyline([(x_inner_left, y_out_L_left), (x_step_out, y_out_L_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # 3) rechte Innenstrecke ab Naht (schräg wie im Bild grün markiert)
-        msp.add_lwpolyline([(x_step_out, y_out_R_left), (x_inner_right, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # 4) rechtes Randband (horizontal – nur am rechten Cluster-Ende)
+        # Diese beiden Punkte sind identisch (Treffpunkt der Oberkante an der Naht)
+        x_left_end_top     = xSeam + top_off
+        x_right_start_top  = xRightStart + top_off  # == x_left_end_top
+
+        # Linkes Stück bis zur Naht/Stufe
+        msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Rechtes Stück ab der Naht/Stufe bis zum rechten Außenrand des Paares
+        # (xR ist bei weiterem Merge rechts bereits die nächste Naht; sonst Außenkante)
+        msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Bei Durchstich (kein join_only) überdeckt die Oberkante auch den Pass:
+        if (not join_only) and (xRightStart - xSeam) > 1e-9:
+            msp.add_lwpolyline([(xSeam, yTopL), (xRightStart, yTopL)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # --- Innen-Oberkante des MITTLEREN Grabens schließen ------------------------
+        # Nur nötig, wenn links ebenfalls eine Verbindung (ohne Durchstich) anliegt;
+        # bei Durchstich links ist die Oberkante über dem Pass schon gezeichnet.
+        if i > 0 and join_L:
+            # Schritt-Richtung (horizontale Versetzung) an der linken Naht rekonstruieren
+            top_off_L = 0.0
+            bg0 = trenches[i-1]  # linker Nachbar des mittleren Grabens
+            T0_ref, T0_L, T0_R = _depths(bg0)
+            base0 = _base_y(T0_ref)
+            y_out_0_right = (base0 + (T0_ref - T0_R)) - CLR_BOT   # Außen-Unterkante rechts vom linken Graben
+            y_out_1_left  = (baseL + (T1_ref - T1_L)) - CLR_BOT   # Außen-Unterkante links vom mittleren Graben
+            if abs(y_out_0_right - y_out_1_left) > 1e-9:
+                top_off_L = (CLR_LR if (y_out_0_right <= y_out_1_left + 1e-9) else -CLR_LR)
+
+            # Treffpunkte der Oberkante an linker und rechter Naht
+            # (rechts: 'top_off' wurde oben schon für die aktuelle Naht berechnet)
+            x_left_mid_top  = x_start      + top_off_L
+            x_right_mid_top = xRightStart  + top_off
+
+            # yTop ist numerisch identisch für links/rechts
+            yTop = yTopL
+
+            if x_right_mid_top - x_left_mid_top > 1e-9:
+                msp.add_lwpolyline(
+                    [(x_left_mid_top, yTop), (x_right_mid_top, yTop)],
+                    dxfattribs={"layer": LAYER_TRENCH_OUT},
+                )
+
+        # ----- Join/Clip für die Außen-Unterkante bestimmen -----
+        EPS = 1e-3  # ~1 mm Anti-Z-Fighting
+
+        # Rechte Naht BG1|BG2 (aktuell)
+        has_step_R = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
+        step_dir_R = 0.0
+        if has_step_R:
+            # links tiefer/gleich -> Stufe nach rechts (+CLR_LR), sonst nach links (-CLR_LR)
+            step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
+        x_join_R = xSeam + (step_dir_R if has_step_R else 0.0)
+
+        cap_left   = 0.0
+        step_dir_L = 0.0
+        if i > 0 and join_L:
+            bg_prev = trenches[i-1]
+            Tp_ref, Tp_L, Tp_R = _depths(bg_prev)
+            base_p = _base_y(Tp_ref)
+            y_out_prev_right = (base_p + (Tp_ref - Tp_R)) - CLR_BOT
+            y_out_mid_left   = (baseL  + (T1_ref - T1_L)) - CLR_BOT
+
+            # Stufenrichtung an der linken Naht (nur zur EPS-Logik)
+            if abs(y_out_prev_right - y_out_mid_left) > 1e-9:
+                step_dir_L = (CLR_LR if (y_out_prev_right <= y_out_mid_left + 1e-9) else -CLR_LR)
+
+            # kappen nur wenn Stufe nach rechts zeigt (sonst Überstand in den Nachbar)
+            if step_dir_L > 0:
+                cap_left = CLR_LR
+
+        # ---- LINKE SCHRÄGE (BG1) ----------------------------------------------------
+        xL0_raw, yL0_raw = x_inner_left, y_out_L_left
+        xL1_raw, yL1_raw = x_join_R,    y_out_L_right
+
+        # Linke Stufen-Vertikale (nur relevant, wenn links verbunden ist)
+        x_join_L = None
+        if i > 0 and join_L and abs(y_out_prev_right - y_out_mid_left) > 1e-9:
+            # Stufenrichtung links bereits oben in step_dir_L ermittelt (+CLR_LR / -CLR_LR)
+            x_join_L = x_start + step_dir_L  # Vertikale der Außenstufe an der linken Naht
+
+        # Startpunkt bestimmen
+        if x_join_L is not None and step_dir_L < 0:  
+            # mittlerer BG tiefer -> Stufe nach links: bis zur Stufenvertikalen ziehen
+            xL0 = min(x_inner_left - EPS, x_join_L)    # leicht überlappen
+        else:
+            # wie gehabt: nur kappen, wenn nötig
+            eps_left = ( -EPS if (join_L and step_dir_L < 0 and cap_left == 0.0)
+                        else (EPS if cap_left > 0 else 0.0) )
+            xL0 = xL0_raw + cap_left + eps_left
+
+        # y am neuen Start interpolieren
+        def _y_on_line(xa, ya, xb, yb, x):
+            if abs(xb - xa) < 1e-12:
+                return ya
+            t = (x - xa) / (xb - xa)
+            return ya + t * (yb - ya)
+
+        yL0 = _y_on_line(xL0_raw, yL0_raw, xL1_raw, yL1_raw, xL0)
+
+        if xL1_raw - xL0 > EPS:
+            msp.add_lwpolyline([(xL0, yL0), (xL1_raw, yL1_raw)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # ---- RECHTE SCHRÄGE (BG2) ---------------------------------------------------
+        xR0_raw, yR0_raw = x_join_R,      y_out_R_left
+        xR1_raw, yR1_raw = x_inner_right, y_out_R_right
+
+        # Stufe an der aktuellen (rechten) Naht?
+        start_cap_R = (CLR_LR if (join_only and step_dir_R < 0) else 0.0)  # Start kappen, wenn Stufe nach LINKS
+        end_cap_R   = (CLR_LR if (join_only and step_dir_R > 0) else 0.0)  # Ende  kappen, wenn Stufe nach RECHTS
+
+        xR0 = xR0_raw + start_cap_R + (EPS if start_cap_R > 0 else 0.0)
+        xR1 = xR1_raw - end_cap_R   - (EPS if end_cap_R   > 0 else 0.0)
+
+        # --- NEU: Look-ahead auf die NÄCHSTE Naht rechts (BG2 | BG3) -----------------
+        # Nur wenn rechts tatsächlich wieder verbunden wird (join_R) und BG3 existiert
+        if join_R and (i + 2) < len(trenches):
+            bg_next = trenches[i + 2]                          # BG3
+            Tn_ref, Tn_L, Tn_R = _depths(bg_next)
+            base_n = _base_y(Tn_ref)
+
+            # Außen-Unterkanten an der nächsten Naht (linke Seite = BG2 rechts)
+            y_out_next_left = (base_n + (Tn_ref - Tn_L)) - CLR_BOT
+            has_step_next   = abs(y_out_R_right - y_out_next_left) > 1e-9
+
+            x_seam_next = xRightStart + L2                      # Naht BG2|BG3
+            if has_step_next:
+                step_dir_next = (CLR_LR if (y_out_R_right <= y_out_next_left + 1e-9) else -CLR_LR)
+                x_join_next   = x_seam_next + step_dir_next     # Vertikale der Außenstufe an der nächsten Naht
+
+                # Stufe an der nächsten Naht nach LINKS -> unsere Linie dort abschneiden
+                if step_dir_next < 0:
+                    xR1 = min(xR1, x_join_next - EPS)
+            else:
+                # keine Stufe -> bis zur nächsten Naht schneiden
+                xR1 = min(xR1, x_seam_next - EPS)
+
+        # y-Koordinaten zu den ggf. geclippten x berechnen
+        def _y_on_line(xa, ya, xb, yb, x):
+            if abs(xb - xa) < 1e-12:
+                return ya
+            t = (x - xa) / (xb - xa)
+            return ya + t * (yb - ya)
+
+        yR0 = _y_on_line(xR0_raw, yR0_raw, xR1_raw, yR1_raw, xR0)
+        yR1 = _y_on_line(xR0_raw, yR0_raw, xR1_raw, yR1_raw, xR1)
+
+        if xR1 - xR0 > EPS:
+            msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # UNTERKANTE außen – folgt dem Gefälle; nur an den Cluster-Außenrändern zeichnen
+        # Linke Seite (nur wenn links kein weiterer Merge anliegt)
+        if not has_pass_left:
+            # 1) linkes Randband (horizontal)
+            msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            # 2) bis zur Naht (schräg bei Gefälle)
+            msp.add_lwpolyline([(x_inner_left, y_out_L_left), (x_step_out, y_out_L_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Rechte Seite (nur wenn rechts kein weiterer Merge anliegt)
         if not has_pass_right:
+            # 3) ab Naht (schräg bei Gefälle)
+            msp.add_lwpolyline([(x_step_out, y_out_R_left), (x_inner_right, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            # 4) rechtes Randband (horizontal)
             msp.add_lwpolyline([(x_inner_right, y_out_R_right), (xR, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
         # Vertikale der Außenstufe nur, wenn wirklich Versatz vorliegt
@@ -1638,6 +1806,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 if effR > 0:
                     aufmass.append(f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else ""))
                     drawn_pipe.add(i+2)
+
+        # -----------------------------
+        # Tiefenmaß links
+        # -----------------------------
+        if (i+1) not in printed_depth:
+            if abs(T1_L - T1_R) < 1e-6:
+                # einheitliche Tiefe – Maß außen links
+                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
+            else:
+                # Gefälle – zwei Maße, Basislinien nach links versetzen,
+                # damit sie sich am xSeam nicht mit den rechten Maßen überlappen
+                _add_depth_dim(x_inner_left, yTopL, T1_L, x_inner_left - DIM_OFFSET_FRONT)
+                _add_depth_dim(xSeam,        yTopL, T1_R, xSeam        - DIM_OFFSET_FRONT)
+            printed_depth.add(i+1)
 
         # -----------------------------
         # Tiefenmaß rechts
