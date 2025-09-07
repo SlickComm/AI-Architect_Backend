@@ -1295,6 +1295,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             )
             drawn_top.add(i + 2)
 
+        # --- Nahtlinie in der Draufsicht (nur im NICHT-überlappenden Bereich) ---
+        # In der Überlappung (0 .. min(B1,B2)) gibt es KEINE Linie.
+        # Die Linie schließt nur die Stufe: min(B1,B2) .. max(B1,B2).
+        if join_only and abs(B1 - B2) > 1e-9:
+            y_lo = Y_TOP + min(B1, B2)
+            y_hi = Y_TOP + max(B1, B2)
+            if y_hi - y_lo > 1e-9:
+                msp.add_lwpolyline([(xSeam, y_lo), (xSeam, y_hi)],
+                                dxfattribs={"layer": LAYER_TRENCH_OUT})
+
         # -----------------------------
         # Oberflächen (einmal je BG, an der Naht nur bei Verbindung clippen)
         # -----------------------------
@@ -1450,11 +1460,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
         x_step_out = xSeam + step_dir
 
-        # # OBERKANTE außen (unverändert)
-        # msp.add_lwpolyline([(xL, yTopL), (x_step_out, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # if not has_pass_right:
-        #     msp.add_lwpolyline([(xRightStart + step_dir, yTopR), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
         # --- Oberkante außen: durchgängig, ohne Lücke -------------------------------
         # Bei 'Verbindung' liegt die Außen-Stufe horizontal um CLR_LR versetzt.
         # Nur dann muss die Oberkante beidseitig um 'step_dir' verschoben werden.
@@ -1477,29 +1482,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if (not join_only) and (xRightStart - xSeam) > 1e-9:
             msp.add_lwpolyline([(xSeam, yTopL), (xRightStart, yTopL)],
                             dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # OBERKANTE außen – gerade bis zur Naht; nur an den Cluster-Außenrändern
-        # if not has_pass_left:
-        #     msp.add_lwpolyline([(xL, yTopL), (xSeam, yTopL)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # if not has_pass_right:
-        #     msp.add_lwpolyline([(xRightStart, yTopR), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # # 1) Stück über dem Durchstich schließen (wenn es einen gibt)
-        # if (xRightStart - xSeam) > 1e-9:
-        #     msp.add_lwpolyline(
-        #         [(xSeam, yTopL), (xRightStart, yTopL)],
-        #         dxfattribs={"layer": LAYER_TRENCH_OUT},
-        #     )
-
-        # # 2) NEU: Oberkante des MITTLEREN Grabens zeichnen, wenn links UND rechts gemerged ist
-        # #    (also innerhalb eines 3er-Clusters o.ä.). Das ist die Strecke zwischen linker
-        # #    Naht (xRightStart) und rechter Naht des mittleren Grabens.
-        # if has_pass_left and has_pass_right:
-        #     x_seam_right_of_middle = xRightStart + L2      # = Naht zwischen BG (i+1) und (i+2)
-        #     msp.add_lwpolyline(
-        #         [(xRightStart, yTopR), (x_seam_right_of_middle, yTopR)],
-        #         dxfattribs={"layer": LAYER_TRENCH_OUT},
-        #     )
 
         # --- Innen-Oberkante des MITTLEREN Grabens schließen ------------------------
         # Nur nötig, wenn links ebenfalls eine Verbindung (ohne Durchstich) anliegt;
@@ -1528,12 +1510,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     [(x_left_mid_top, yTop), (x_right_mid_top, yTop)],
                     dxfattribs={"layer": LAYER_TRENCH_OUT},
                 )
-
-
-
-
-
-
 
         # ----- Join/Clip für die Außen-Unterkante bestimmen -----
         EPS = 1e-3  # ~1 mm Anti-Z-Fighting
@@ -1642,17 +1618,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
         if xR1 - xR0 > EPS:
             msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # # UNTERKANTE außen – folgt jetzt dem Gefälle
-        # # 1) linkes Randband (horizontal)
-        # msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # # 2) linke Innenstrecke bis zur Naht (schräg, falls T1_L != T1_R)
-        # msp.add_lwpolyline([(x_inner_left, y_out_L_left), (x_step_out, y_out_L_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # # 3) rechte Innenstrecke ab Naht (schräg wie im Bild grün markiert)
-        # msp.add_lwpolyline([(x_step_out, y_out_R_left), (x_inner_right, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        # # 4) rechtes Randband (horizontal – nur am rechten Cluster-Ende)
-        # if not has_pass_right:
-        #     msp.add_lwpolyline([(x_inner_right, y_out_R_right), (xR, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
         # UNTERKANTE außen – folgt dem Gefälle; nur an den Cluster-Außenrändern zeichnen
         # Linke Seite (nur wenn links kein weiterer Merge anliegt)
