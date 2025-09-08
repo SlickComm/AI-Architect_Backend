@@ -1088,9 +1088,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     printed_depth: set[int] = set()
     skip_single_next = False                # rechter Graben des letzten Merges schon gezeichnet -> Solo überspringen
 
-    MAX_DEPTH = max(_depths(t)[0] for t in trenches)
-    Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH
-
     # --- Tiefenmaße im Merge (Durchstich ODER Verbindung) ----------------------
     def _add_depth_dim(x_col, y_top, depth, base_x):
         msp.add_linear_dim(
@@ -1115,6 +1112,31 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     def _base_y(depth_ref: float) -> float:
         depth_ref = float(depth_ref or 0.0)
         return CLR_BOT + (MAX_DEPTH - depth_ref)
+
+    # --- GOK-Helper ---------------------------------------------------------
+    def _gok(bg: dict) -> float:
+        try:
+            return float(bg.get("gok") or 0.0)
+        except Exception:
+            return 0.0
+
+    # Referenztiefe (bleibt wie bisher)
+    def _depths(bg: dict) -> tuple[float, float, float]:
+        d  = float(bg.get("depth") or 0.0)
+        dL = float(bg.get("depth_left",  d))
+        dR = float(bg.get("depth_right", d))
+        return max(d, dL, dR), dL, dR  # (ref, left, right)
+
+    # Basis-Y der Vorderansicht unter Berücksichtigung von GOK:
+    # sorgt weiterhin dafür, dass ohne GOK alle Oberkanten auf gleicher y liegen,
+    # mit GOK jedoch je Graben um gok verschoben sind.
+    def _base_y_with_gok(depth_ref: float, gok_val: float) -> float:
+        return CLR_BOT + (MAX_DEPTH - depth_ref) + gok_val
+
+    MAX_DEPTH = max(_depths(t)[0] for t in trenches)
+    MAX_GOK   = max(_gok(t) for t in trenches) if trenches else 0.0
+
+    Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH + max(0.0, MAX_GOK)
 
     # ---------- Hauptschleife über alle Baugräben ----------
     i = 0
@@ -1144,7 +1166,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 continue
 
             # NEU: individueller Bottom-Offset, damit y_top = CLR_BOT + MAX_DEPTH
-            base1 = _base_y(T1_ref)
+            base1 = _base_y_with_gok(T1_ref, _gok(bg1))
             oy1   = base1 - 0.2
 
             # Solo (kein Merge zur rechten Seite)
@@ -1255,10 +1277,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         right_clear = 0.0 if has_pass_right else CLR_LR
 
         # Geometrie / Koordinaten (gemeinsame Oberkante)
-        baseL = _base_y(T1_ref)
-        baseR = _base_y(T2_ref)
+        # baseL = _base_y(T1_ref)
+        # baseR = _base_y(T2_ref)
+        # yTopL = baseL + T1_ref
+        # yTopR = baseR + T2_ref
+
+        baseL = _base_y_with_gok(T1_ref, _gok(bg1))
+        baseR = _base_y_with_gok(T2_ref, _gok(bg2))
         yTopL = baseL + T1_ref
         yTopR = baseR + T2_ref
+
 
         xL            = x_start
         x_inner_left  = x_start + left_clear
@@ -1460,54 +1488,109 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
         x_step_out = xSeam + step_dir
 
+        # --- NEU: Stufe an der OBERKANTE bei Verbindungen, wenn GOK differiert ---
+        has_top_step = join_only and (abs(yTopL - yTopR) > 1e-9)
+        if has_top_step:
+            step_dir_top = (CLR_LR if (yTopL <= yTopR + 1e-9) else -CLR_LR)
+        else:
+            step_dir_top = 0.0
+
         # --- Oberkante außen: durchgängig, ohne Lücke -------------------------------
         # Bei 'Verbindung' liegt die Außen-Stufe horizontal um CLR_LR versetzt.
         # Nur dann muss die Oberkante beidseitig um 'step_dir' verschoben werden.
-        top_off = step_dir if join_only else 0.0
+        # top_off = step_dir if join_only else 0.0
 
-        # Diese beiden Punkte sind identisch (Treffpunkt der Oberkante an der Naht)
-        x_left_end_top     = xSeam + top_off
-        x_right_start_top  = xRightStart + top_off  # == x_left_end_top
+        # # Diese beiden Punkte sind identisch (Treffpunkt der Oberkante an der Naht)
+        # x_left_end_top     = xSeam + top_off
+        # x_right_start_top  = xRightStart + top_off  # == x_left_end_top
 
-        # Linkes Stück bis zur Naht/Stufe
+        # # Linkes Stück bis zur Naht/Stufe
+        # msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
+        #                 dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # # Rechtes Stück ab der Naht/Stufe bis zum rechten Außenrand des Paares
+        # # (xR ist bei weiterem Merge rechts bereits die nächste Naht; sonst Außenkante)
+        # msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
+        #                 dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # # Bei Durchstich (kein join_only) überdeckt die Oberkante auch den Pass:
+        # if (not join_only) and (xRightStart - xSeam) > 1e-9:
+        #     msp.add_lwpolyline([(xSeam, yTopL), (xRightStart, yTopL)],
+        #                     dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Horizontaler Versatz der Top-Stufe (nur Verbindung)
+        top_off = step_dir_top if join_only else 0.0
+
+        # Treffpunkte der Oberkante an der Naht
+        x_left_end_top     = xSeam       + top_off
+        x_right_start_top  = xRightStart + top_off  # identisch zu x_left_end_top
+
+        Linkes Stück bis zur Naht/Stufe
         msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
-                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+                           dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # Rechtes Stück ab der Naht/Stufe bis zum rechten Außenrand des Paares
-        # (xR ist bei weiterem Merge rechts bereits die nächste Naht; sonst Außenkante)
+        Rechtes Stück ab Naht/Stufe
         msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
-                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+                           dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # Bei Durchstich (kein join_only) überdeckt die Oberkante auch den Pass:
-        if (not join_only) and (xRightStart - xSeam) > 1e-9:
-            msp.add_lwpolyline([(xSeam, yTopL), (xRightStart, yTopL)],
+        # Vertikale Stufe an der Oberkante einziehen (nur Verbindung mit GOK-Unterschied)
+        if has_top_step:
+            msp.add_lwpolyline(
+                [(x_left_end_top, min(yTopL, yTopR)), (x_left_end_top, max(yTopL, yTopR))],
+                dxfattribs={"layer": LAYER_TRENCH_OUT}
+            )
+
+        if (not join_only) and (xRightStart - xSeam) > EPS:
+            y_bridge = max(yTopL, yTopR)
+            msp.add_lwpolyline([(xSeam, y_bridge), (xRightStart, y_bridge)],
                             dxfattribs={"layer": LAYER_TRENCH_OUT})
 
         # --- Innen-Oberkante des MITTLEREN Grabens schließen ------------------------
         # Nur nötig, wenn links ebenfalls eine Verbindung (ohne Durchstich) anliegt;
         # bei Durchstich links ist die Oberkante über dem Pass schon gezeichnet.
+        # if i > 0 and join_L:
+        #     # Schritt-Richtung (horizontale Versetzung) an der linken Naht rekonstruieren
+        #     top_off_L = 0.0
+        #     bg0 = trenches[i-1]  # linker Nachbar des mittleren Grabens
+        #     T0_ref, T0_L, T0_R = _depths(bg0)
+        #     base0 = _base_y(T0_ref)
+        #     y_out_0_right = (base0 + (T0_ref - T0_R)) - CLR_BOT   # Außen-Unterkante rechts vom linken Graben
+        #     y_out_1_left  = (baseL + (T1_ref - T1_L)) - CLR_BOT   # Außen-Unterkante links vom mittleren Graben
+        #     if abs(y_out_0_right - y_out_1_left) > 1e-9:
+        #         top_off_L = (CLR_LR if (y_out_0_right <= y_out_1_left + 1e-9) else -CLR_LR)
+
+        #     # Treffpunkte der Oberkante an linker und rechter Naht
+        #     # (rechts: 'top_off' wurde oben schon für die aktuelle Naht berechnet)
+        #     x_left_mid_top  = x_start      + top_off_L
+        #     x_right_mid_top = xRightStart  + top_off
+
+        #     # yTop ist numerisch identisch für links/rechts
+        #     yTop = yTopL
+
+        #     if x_right_mid_top - x_left_mid_top > 1e-9:
+        #         msp.add_lwpolyline(
+        #             [(x_left_mid_top, yTop), (x_right_mid_top, yTop)],
+        #             dxfattribs={"layer": LAYER_TRENCH_OUT},
+        #         )
+
         if i > 0 and join_L:
-            # Schritt-Richtung (horizontale Versetzung) an der linken Naht rekonstruieren
-            top_off_L = 0.0
-            bg0 = trenches[i-1]  # linker Nachbar des mittleren Grabens
+            # Top-Stufe an der linken Naht über GOK prüfen
+            bg0 = trenches[i-1]
             T0_ref, T0_L, T0_R = _depths(bg0)
-            base0 = _base_y(T0_ref)
-            y_out_0_right = (base0 + (T0_ref - T0_R)) - CLR_BOT   # Außen-Unterkante rechts vom linken Graben
-            y_out_1_left  = (baseL + (T1_ref - T1_L)) - CLR_BOT   # Außen-Unterkante links vom mittleren Graben
-            if abs(y_out_0_right - y_out_1_left) > 1e-9:
-                top_off_L = (CLR_LR if (y_out_0_right <= y_out_1_left + 1e-9) else -CLR_LR)
+            base0  = _base_y_with_gok(T0_ref, _gok(bg0))
+            yTop0  = base0 + T0_ref
+            yTop1  = yTopL  # (mittlerer Graben links)
 
-            # Treffpunkte der Oberkante an linker und rechter Naht
-            # (rechts: 'top_off' wurde oben schon für die aktuelle Naht berechnet)
-            x_left_mid_top  = x_start      + top_off_L
-            x_right_mid_top = xRightStart  + top_off
+            top_off_L = 0.0
+            if abs(yTop0 - yTop1) > 1e-9:
+                top_off_L = (CLR_LR if (yTop0 <= yTop1 + 1e-9) else -CLR_LR)
 
-            # yTop ist numerisch identisch für links/rechts
-            yTop = yTopL
+            x_left_mid_top  = x_start     + top_off_L
+            x_right_mid_top = xRightStart + top_off
 
             if x_right_mid_top - x_left_mid_top > 1e-9:
                 msp.add_lwpolyline(
-                    [(x_left_mid_top, yTop), (x_right_mid_top, yTop)],
+                    [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
                     dxfattribs={"layer": LAYER_TRENCH_OUT},
                 )
 
