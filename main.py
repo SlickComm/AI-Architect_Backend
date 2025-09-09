@@ -1502,11 +1502,11 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         x_left_end_top     = xSeam       + top_off
         x_right_start_top  = xRightStart + top_off  # identisch zu x_left_end_top
 
-        Linkes Stück bis zur Naht/Stufe
+        # Linkes Stück bis zur Naht/Stufe
         msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
                            dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        Rechtes Stück ab Naht/Stufe
+        # Rechtes Stück ab Naht/Stufe
         msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
                            dxfattribs={"layer": LAYER_TRENCH_OUT})
 
