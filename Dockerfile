@@ -1,5 +1,5 @@
 # 1) Wähle ein passendes Base-Image
-FROM python:3.9-slim
+FROM python:3.13-slim
 
 # 2) Um sicherzustellen, dass Python direkt loggt und keine .pyc-Dateien erzeugt
 ENV PYTHONUNBUFFERED=1
