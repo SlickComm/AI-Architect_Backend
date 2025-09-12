@@ -1619,16 +1619,20 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         #  - LINKE KANTE: IMMER zeichnen (auch bei Durchstich) → schließt die Kontur (grüne Linie)
         #  - RECHTE KANTE: nur bei reiner Verbindung, um Doppel-Linien zu vermeiden
         if has_step:
-            # linke Lückenkante
-            msp.add_lwpolyline([(x_step_out_L, min(y_out_L_right, y_out_R_left)),
-                                (x_step_out_L, max(y_out_L_right, y_out_R_left))],
-                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+            # linke Lückenkante (an der Naht)
+            msp.add_lwpolyline(
+                [(x_step_out_L, min(y_out_L_right, y_out_R_left)),
+                (x_step_out_L, max(y_out_L_right, y_out_R_left))],
+                dxfattribs={"layer": LAYER_TRENCH_OUT}
+            )
 
-            # rechte Lückenkante nur ohne Pass
+            # rechte Lückenkante nur ohne Durchstich
             if join_only:
-                msp.add_lwpolyline([(x_step_out_R, min(y_out_L_right, y_out_R_left)),
-                                    (x_step_out_R, max(y_out_L_right, y_out_R_left))],
-                                dxfattribs={"layer": LAYER_TRENCH_OUT})
+                msp.add_lwpolyline(
+                    [(x_step_out_R, min(y_out_L_right, y_out_R_left)),
+                    (x_step_out_R, max(y_out_L_right, y_out_R_left))],
+                    dxfattribs={"layer": LAYER_TRENCH_OUT}
+                )
 
         cap_left   = 0.0
         step_dir_L = 0.0
@@ -1685,33 +1689,36 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         xR1_raw, yR1_raw = x_inner_right, y_out_R_right
 
         # Stufe an der aktuellen (rechten) Naht?
-        start_cap_R = (CLR_LR if (join_only and step_dir_R < 0) else 0.0)  # Start kappen, wenn Stufe nach LINKS
-        end_cap_R   = (CLR_LR if (join_only and step_dir_R > 0) else 0.0)  # Ende  kappen, wenn Stufe nach RECHTS
+        # start_cap_R = (CLR_LR if (join_only and step_dir_R < 0) else 0.0)
+        # end_cap_R   = (CLR_LR if (join_only and step_dir_R > 0) else 0.0)
 
-        xR0 = xR0_raw + start_cap_R + (EPS if start_cap_R > 0 else 0.0)
-        xR1 = xR1_raw - end_cap_R   - (EPS if end_cap_R   > 0 else 0.0)
+        # Gap-Fix: Überlappung (−EPS/+EPS invertieren)
+        xR0_raw, yR0_raw = x_join_R,      y_out_R_left
+        xR1_raw, yR1_raw = x_inner_right, y_out_R_right
 
-        # --- NEU: Look-ahead auf die NÄCHSTE Naht rechts (BG2 | BG3) -----------------
-        # Nur wenn rechts tatsächlich wieder verbunden wird (join_R) und BG3 existiert
+        # Start exakt an die Stufen-Vertikale kleben, damit keine Lücke entsteht
+        if join_only and has_step:
+            # Stufen-Vertikale rechts liegt bei x_step_out_R
+            xR0 = x_step_out_R - EPS      # kleine Überlappung in die Stufe
+            xR1 = xR1_raw                 # Ende wird ggf. unten (Look-ahead) beschnitten
+        else:
+            xR0 = xR0_raw
+            xR1 = xR1_raw
+
+        # --- Look-ahead auf die nächste Naht rechts (BG2 | BG3) wie bisher ---
         if join_R and (i + 2) < len(trenches):
-            bg_next = trenches[i + 2]                          # BG3
+            bg_next = trenches[i + 2]
             Tn_ref, Tn_L, Tn_R = _depths(bg_next)
             base_n = _base_y_with_gok(Tn_ref, _gok(bg_next))
-
-            # Außen-Unterkanten an der nächsten Naht (linke Seite = BG2 rechts)
             y_out_next_left = (base_n + (Tn_ref - Tn_L)) - CLR_BOT
             has_step_next   = abs(y_out_R_right - y_out_next_left) > 1e-9
-
-            x_seam_next = xRightStart + L2                      # Naht BG2|BG3
+            x_seam_next = xRightStart + L2
             if has_step_next:
                 step_dir_next = (CLR_LR if (y_out_R_right <= y_out_next_left + 1e-9) else -CLR_LR)
-                x_join_next   = x_seam_next + step_dir_next     # Vertikale der Außenstufe an der nächsten Naht
-
-                # Stufe an der nächsten Naht nach LINKS -> unsere Linie dort abschneiden
+                x_join_next   = x_seam_next + step_dir_next
                 if step_dir_next < 0:
                     xR1 = min(xR1, x_join_next - EPS)
             else:
-                # keine Stufe -> bis zur nächsten Naht schneiden
                 xR1 = min(xR1, x_seam_next - EPS)
 
         # y-Koordinaten zu den ggf. geclippten x berechnen
@@ -1725,7 +1732,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         yR1 = _y_on_line(xR0_raw, yR0_raw, xR1_raw, yR1_raw, xR1)
 
         if xR1 - xR0 > EPS:
-            msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
 
         # --- Innenbodenlinien MIT Gefälle (bereits vorhanden) ---
         msp.add_lwpolyline([(x_inner_left, y_in_L_left), (xSeam,        y_in_L_right)], dxfattribs={"layer": LAYER_TRENCH_IN})
