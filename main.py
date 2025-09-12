@@ -464,10 +464,28 @@ def _num_to_meters(x) -> Optional[float]:
         return float(m.group(1))/1000.0
     return None
 
+def _to_meters(val) -> float:
+    # gleiche Logik wie bei length/width/diameter: Komma -> Punkt, Einheiten m/cm/mm
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
+    s = str(val).strip().lower().replace(",", ".")
+    mul = 1.0
+    if s.endswith("mm"): mul, s = 0.001, s[:-2]
+    elif s.endswith("cm"): mul, s = 0.01, s[:-2]
+    elif s.endswith("m"):  mul, s = 1.0, s[:-1]
+    try:
+        return float(s) * mul
+    except Exception:
+        return 0.0
+
 def _coerce_updates(upd: dict) -> dict:
     out = {}
     for k, v in (upd or {}).items():
         key = FIELD_ALIASES.get(_norm_text(k), k)
+        if key in ("gok", "geländeoberkante", "gelaendeoberkante"):
+            out["gok"] = _to_meters(v)
+            continue
+
         if key in {"length","width","depth","diameter","offset"}:
             mv = _num_to_meters(v)
             if mv is not None:
@@ -993,6 +1011,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     TOP_SHIFT = 1.50    # Abstand Draufsicht → Vorderansicht
     PASS_BOTTOM_GAP = 0.5
     PASS_SYMBOL_H = 0.40  # sichtbare Höhe des Durchstich-Rechtecks in der Vorderansicht
+    PASS_DIM_OFFSET = 0.50   # Abstand der Maßlinie über der Oberkante des Durchstichs
 
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
@@ -1133,6 +1152,26 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 "dimexe": DIM_EXE_OFF,
                 "dimexo": DIM_EXE_OFF,
                 "dimtad": 0,
+            },
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
+
+    def _add_pass_len_dim(x0: float, x1: float, y_ref: float):
+        """
+        Horizontales Maß über dem Durchstich (x0..x1) an der Oberkante y_ref.
+        """
+        y_dim = y_ref + PASS_DIM_OFFSET
+        msp.add_linear_dim(
+            base=(x0, y_dim),           # Lage der Maßlinie (y-Distanz ist entscheidend)
+            p1=(x0, y_ref),             # linker Bezugspunkt
+            p2=(x1, y_ref),             # rechter Bezugspunkt
+            angle=0,                    # horizontal
+            override={
+                "dimtxt":  DIM_TXT_H,   # Textgröße wie bei deinen anderen Maßen
+                "dimclrd": 3,           # grün wie in deinen Screenshots
+                "dimexe":  DIM_EXE_OFF, # keine Überstände
+                "dimexo":  DIM_EXE_OFF, # kein Abstand der Hilfslinien
+                "dimtad":  0,           # Text auf der Maßlinie
             },
             dxfattribs={"layer": LAYER_TRENCH_OUT},
         ).render()
@@ -1825,12 +1864,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         #                 msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
         if not join_only:
+            y_ref = max(yTopL, yTopR)
             # an die Oberkante in der Lücke (Brücke liegt auf max(yTopL, yTopR))
             _draw_pass_symbol_rect(
                 xSeam, xRightStart,
                 pattern=pas.get("pattern"),
                 y_top=max(yTopL, yTopR)
             )
+
+            # Maß für die Durchstich-Länge
+            _add_pass_len_dim(xSeam, xRightStart, y_ref)
 
         # -----------------------------
         # Rohr(e)
@@ -1986,6 +2029,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 # -----------------------------------------------------
 # Edit Element
 # -----------------------------------------------------
+_BG_IDX_RE = re.compile(r'\b(?:bg|baugraben)\s*([1-9]\d*)\b', re.I)
+
+def _explicit_trench_from_instruction(instr: str) -> int | None:
+    m = _BG_IDX_RE.search(instr or "")
+    return int(m.group(1)) if m else None
+
 @app.post("/edit-element")
 def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     session = session_manager.get_session(session_id)
@@ -2008,6 +2057,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     Setze „depth“ NICHT zusätzlich; das System berücksichtigt die größte Tiefe intern.
     • Formulierungen mit „weitere Tiefe“ / „zusätzliche Tiefe“ sind KEINE neuen Objekte,
     sondern ein Feld-Update (z. B. set.depth_right = …).
+    • GOK (Geländeoberkante): negative/positive Werte in m sind zulässig.
 
     BEISPIELE (sehr wichtig)
     Eingabe: "Füge zum ersten Baugraben eine weitere Tiefe rechts mit 1,50 m hinzu."
@@ -2016,6 +2066,20 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     "selection": {{ "type": "Baugraben", "trench_index": 1 }},
     "set": {{ "depth_right": 1.5 }},
     "answer": "Tiefe rechts bei Baugraben 1 auf 1,50 m gesetzt."
+    }}
+    Eingabe: "Ändere bei Bg3 GOK auf -0,3"
+    Antwort:
+    {{
+    "selection": {{ "type": "Baugraben", "trench_index": 3 }},
+    "set": {{ "gok": -0.3 }},
+    "answer": "GOK bei Baugraben 3 auf -0,30 m gesetzt."
+    }}
+    Eingabe: "Setze bei Bg2 GOK auf -0,30 m"
+    Antwort:
+    {{
+    "selection": {{ "type": "Baugraben", "trench_index": 2 }},
+    "set": {{ "gok": -0.30 }},
+    "answer": "GOK bei Baugraben 2 auf -0,30 m gesetzt."
     }}
 
     ADRESSIERUNG
@@ -2036,7 +2100,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     • KEIN 'trench_index' bei Nicht-Baugraben setzen.
 
     ERLAUBTE ÄNDERUNGEN
-    length | width | depth | depth_left | depth_right | diameter | material | offset | pattern
+    length | width | depth | depth_left | depth_right | gok | diameter | material | offset | pattern
     • „DN300“ o. ä. → diameter = 0.30 (Meter).
     • Komma-/Punktwerte und Einheiten mm/cm/m korrekt interpretieren.
 
@@ -2079,8 +2143,25 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     sel["type"] = _normalize_type_aliases(sel["type"])
     updates = _coerce_updates(updates_raw)
 
+    explicit_bg = _explicit_trench_from_instruction(instruction)
+    if explicit_bg is not None and sel.get("type","").lower().startswith("baugraben"):
+        sel["trench_index"] = explicit_bg
+
+    if ("gok" not in updates
+        and sel.get("type","").lower().startswith("baugraben")
+        and re.search(r"\b(lösch(e)?|entfern(e)?|reset(te)?)\b.*\bgok\b", instruction.lower())):
+        updates["gok"] = 0.0
+
     # 2) Ziel finden (LLM-Auswahl → Backend-Heuristik als Fallback)
     elems = session.setdefault("elements", [])
+    count_trenches = sum(1 for e in elems if (e.get("type","") or "").lower().startswith("baugraben"))
+
+    # Harte Validierung: es muss existieren
+    if sel.get("type","").lower().startswith("baugraben"):
+        ti = int(sel.get("trench_index") or 0)
+        if ti < 1 or ti > count_trenches:
+            raise HTTPException(404, f"Baugraben {ti} existiert nicht (1..{count_trenches}).")
+
     idx = _find_target_index_by_selection(elems, sel)
     if idx is None:
         idx = _resolve_selection_heuristic(elems, sel)
@@ -2123,6 +2204,14 @@ ZIEL
   „Oberfläche“/„Pflaster“/„Gehwegplatten“ → Oberflächenbefestigung.
   „Verbindung/verbinde/Verbund/connect“ → Verbindung.
 
+SONDERFALL
+• Wenn der Text das Löschen/Entfernen/Zurücksetzen von „GOK“ bei einem Baugraben verlangt
+  (z. B. „Lösche GOK bei Bg2“, „entferne die Geländeoberkante bei BG 1“),
+  ERZEUGE KEINE LÖSCHUNG. Gib stattdessen:
+  - selection.type = "Baugraben", selection.trench_index = N
+  - mode = "reset_gok"
+  (Die Logik setzt GOK intern auf 0,00 m zurück.)
+
 ADRESSIERUNG
 • "Baugraben N"             → selection.trench_index = N
 • "Rohr im/zu BG N"         → selection.for_trench = N
@@ -2137,6 +2226,16 @@ MODUS
   (z. B. „Lösche alle Oberflächen in BG 2“, „Entferne alle Durchstiche“, „Lösche alle Verbindungen“),
   setze "mode": "bulk".
 • Sonst "mode": "single".
+• Für den SONDERFALL oben verwende "mode": "reset_gok".
+
+BEISPIELE
+Eingabe: "Lösche GOK bei Bg2"
+Antwort:
+{{
+  "selection": {{ "type": "Baugraben", "trench_index": 2 }},
+  "mode": "reset_gok",
+  "answer": "GOK bei Baugraben 2 auf 0,00 m zurückgesetzt."
+}}
 
 ANTWORTFORMAT (exakt so!):
 {{
@@ -2175,7 +2274,7 @@ ANTWORTFORMAT (exakt so!):
     # 1) Normalisieren
     sel["type"] = _normalize_type_aliases(sel["type"])
     mode = (data.get("mode") or "single").lower()
-    if mode not in ("single", "bulk"):
+    if mode not in ("single", "bulk", "reset_gok"):
         mode = "single"
 
     elems = session.setdefault("elements", [])
@@ -2219,20 +2318,39 @@ ANTWORTFORMAT (exakt so!):
             b = s.get("between", None)
             return (b is None) or (int(e.get("between", -1)) == int(b))
 
+        if mode != "reset_gok" and re.search(r"\b(lösch(e|en)?|entfern(e|en)?|reset(te|ten)?|zurücksetz(e|en)?)\b.*\b(gok|gel[äa]ndeoberkante)\b", instruction, re.I):
+            mode = "reset_gok"
+            m = re.search(r"\b(?:bg|baugraben)\s*([1-9]\d*)\b", instruction, re.I)
+            if m:
+                sel["trench_index"] = int(m.group(1))
+                sel["type"] = "Baugraben"
+
         return False
 
     deleted = 0
 
     # 2) Löschen
-    if mode == "single":
-        # Primär LLM-Selektion, Fallback Heuristik
+    # --- Aktion: reset_gok VOR den Löschzweigen behandeln ---
+    if mode == "reset_gok":
         idx = _find_target_index_by_selection(elems, sel)
         if idx is None:
             idx = _resolve_selection_heuristic(elems, sel)
         if idx is None:
             raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
 
-        # Safety: Meta-Typen nicht löschen
+        if (elems[idx].get("type","") or "").lower().startswith("baugraben"):
+            elems[idx]["gok"] = 0.0
+        else:
+            raise HTTPException(400, "GOK-Reset ist nur für Baugräben zulässig.")
+
+    # --- 2) Löschen ---
+    elif mode == "single":
+        idx = _find_target_index_by_selection(elems, sel)
+        if idx is None:
+            idx = _resolve_selection_heuristic(elems, sel)
+        if idx is None:
+            raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
+
         t_low = (elems[idx].get("type","") or "").lower()
         if t_low in ("aufmass", "aufmass_override"):
             raise HTTPException(400, "Dieses Element ist nicht löschbar.")
@@ -2240,7 +2358,7 @@ ANTWORTFORMAT (exakt so!):
         del elems[idx]
         deleted = 1
 
-    else:  # bulk
+    elif mode == "bulk":
         to_delete = [i for i, e in enumerate(elems) if _matches_bulk(e, sel)]
         if not to_delete:
             raise HTTPException(404, f"Keine passenden Elemente für bulk selection={sel} gefunden.")
@@ -2256,6 +2374,7 @@ ANTWORTFORMAT (exakt so!):
     return {
         "status": "ok",
         "deleted": deleted,
+
         "updated_json": session,
         "answer": data.get("answer", "")
     }
