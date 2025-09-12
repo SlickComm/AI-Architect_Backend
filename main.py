@@ -1341,17 +1341,18 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if (i + 1) not in drawn_top:
             draw_trench_top(
                 msp, top_left_1, length=L1, width=B1,
-                clip_left=(join_L and join_only),
-                clip_right=(join_M and join_only),
+                clip_left=join_L,          # vorher: (join_L and join_only)
+                clip_right=join_only,      # vorher: (join_M and join_only)
                 dim_right=False
             )
             drawn_top.add(i + 1)
 
+        # --- Draufsicht Baugraben 2 (rechts vom aktuellen Merge 1|2)
         if (i + 2) not in drawn_top:
             draw_trench_top(
                 msp, top_left_2, length=L2, width=B2,
-                clip_left=(join_M and join_only),
-                clip_right=(join_R and join_only),
+                clip_left=join_only,       # vorher: (join_M and join_only)
+                clip_right=join_R,         # vorher: (join_R and join_only)
                 dim_right=(i + 2 == len(trenches))
             )
             drawn_top.add(i + 2)
@@ -1380,8 +1381,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         "material": s.get("material", "")
                     } for s in seg_list_L],
                     add_dims=True,
-                    clip_left=(join_L and join_only),
-                    clip_right=(join_M and join_only),
+                    clip_left=join_L,
+                    clip_right=join_only,
                 )
                 _append_surface_segments_aufmass(
                     i+1, seg_list_L, aufmass, L1, B1,
@@ -1415,8 +1416,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         "material": s.get("material", "")
                     } for s in seg_list_R],
                     add_dims=True,
-                    clip_left=(join_M and join_only),
-                    clip_right=(join_R and join_only),
+                    clip_left=join_only,
+                    clip_right=join_R,
                 )
                 _append_surface_segments_aufmass(
                     i+2, seg_list_R, aufmass, L2, B2,
@@ -1683,7 +1684,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if join_R and (i + 2) < len(trenches):
             bg_next = trenches[i + 2]                          # BG3
             Tn_ref, Tn_L, Tn_R = _depths(bg_next)
-            base_n = _base_y(Tn_ref)
+            base_n = _base_y_with_gok(Tn_ref, _gok(bg_next))
 
             # Außen-Unterkanten an der nächsten Naht (linke Seite = BG2 rechts)
             y_out_next_left = (base_n + (Tn_ref - Tn_L)) - CLR_BOT
@@ -1947,7 +1948,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
         # Bookkeeping / Cursor / Skip
         trench_origin_x[i]   = x_start
-        trench_origin_x[i+1] = x_start + left_clear + L1
+        trench_origin_x[i+1] = xRightStart
         cursor_x = max(cursor_x, x_inner_right + right_clear + GAP_BG)
         skip_single_next = True
         i += 1
