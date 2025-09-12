@@ -1348,12 +1348,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         left_clear  = 0.0 if has_pass_left  else CLR_LR
         right_clear = 0.0 if has_pass_right else CLR_LR
 
-        # Geometrie / Koordinaten (gemeinsame Oberkante)
-        # baseL = _base_y(T1_ref)
-        # baseR = _base_y(T2_ref)
-        # yTopL = baseL + T1_ref
-        # yTopR = baseR + T2_ref
-
         baseL = _base_y_with_gok(T1_ref, _gok(bg1))
         baseR = _base_y_with_gok(T2_ref, _gok(bg2))
         yTopL = baseL + T1_ref
@@ -1529,18 +1523,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if not has_pass_right:
             msp.add_lwpolyline([(xR, y_out_R), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # -----------------------------
-        # RAND-SCHRAFFUR (Verbindung)
-        # -----------------------------
-        # def _hatch_poly(pts):
-        #     h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
-        #     angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
-        #     h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE, angle=angle)
-        #     cx = sum(p[0] for p in pts)/len(pts); cy = sum(p[1] for p in pts)/len(pts)
-        #     try: h.set_pattern_origin((cx, cy))
-        #     except AttributeError: pass
-        #     h.paths.add_polyline_path(pts, is_closed=True)
-
         # --- Innen-/Außenboden-Niveaus LINKS/RECHTS (jeweils am Rand bzw. an der Naht)
         y_in_L_left   = baseL + (T1_ref - T1_L)
         y_in_L_right  = baseL + (T1_ref - T1_R)
@@ -1613,15 +1595,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
                     dxfattribs={"layer": LAYER_TRENCH_OUT},
                 )
-
-        # ----- Join/Clip für die Außen-Unterkante bestimmen -----
-        # Rechte Naht BG1|BG2 (aktuell)
-        # has_step_R = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
-        # step_dir_R = 0.0
-        # if has_step_R:
-        #     # links tiefer/gleich -> Stufe nach rechts (+CLR_LR), sonst nach links (-CLR_LR)
-        #     step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
-        # x_join_R = xSeam + (step_dir_R if has_step_R else 0.0)
 
         has_step = abs(y_out_L_right - y_out_R_left) > 1e-9
         step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR) if has_step else 0.0
@@ -1754,27 +1727,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if xR1 - xR0 > EPS:
             msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # UNTERKANTE außen – folgt dem Gefälle; nur an den Cluster-Außenrändern zeichnen
-        # Linke Seite (nur wenn links kein weiterer Merge anliegt)
-        # if not has_pass_left:
-        #     # 1) linkes Randband (horizontal)
-        #     msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        #     # 2) bis zur Naht (schräg bei Gefälle)
-        #     msp.add_lwpolyline([(x_inner_left, y_out_L_left), (x_step_out, y_out_L_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # # Rechte Seite (nur wenn rechts kein weiterer Merge anliegt)
-        # if not has_pass_right:
-        #     # 3) ab Naht (schräg bei Gefälle)
-        #     msp.add_lwpolyline([(x_step_out, y_out_R_left), (x_inner_right, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-        #     # 4) rechtes Randband (horizontal)
-        #     msp.add_lwpolyline([(x_inner_right, y_out_R_right), (xR, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # # Vertikale der Außenstufe nur, wenn wirklich Versatz vorliegt
-        # if has_step:
-        #     y_hi = max(y_out_L_right, y_out_R_left)
-        #     y_lo = min(y_out_L_right, y_out_R_left)
-        #     msp.add_lwpolyline([(x_step_out, y_lo), (x_step_out, y_hi)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
         # --- Innenbodenlinien MIT Gefälle (bereits vorhanden) ---
         msp.add_lwpolyline([(x_inner_left, y_in_L_left), (xSeam,        y_in_L_right)], dxfattribs={"layer": LAYER_TRENCH_IN})
         msp.add_lwpolyline([(xSeam,        y_in_R_left), (x_inner_right, y_in_R_right)], dxfattribs={"layer": LAYER_TRENCH_IN})
@@ -1827,41 +1779,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             y_lo = min(y_out_L_right, y_out_R_left)
             y_hi = max(y_out_L_right, y_out_R_left)
             _hatch_poly([(x0, y_lo), (x1, y_lo), (x1, y_hi), (x0, y_hi)])
-
-        # -----------------------------
-        # Durchstich (nur wenn vorhanden) + Basislinie/Hatch NUR dann
-        # -----------------------------
-        # if not join_only:
-        #     # Pass-Schraffur
-        #     draw_pass_front(
-        #         msp,
-        #         trench_origin=(x_start, 0.0),
-        #         trench_len=L1 + p_w + L2,
-        #         trench_depth=max(T1_ref, T2_ref),
-        #         width=p_w,
-        #         offset=p_off,
-        #         clearance_left=left_clear,
-        #         clearance_bottom=CLR_BOT,
-        #         pattern=pas.get("pattern", HATCH_PATTERN),
-        #         hatch_scale=HATCH_SCALE,
-        #         seed_point=(0.0, 0.0),
-        #     )
-
-        #     # ... direkt vor den Basislinien ergänzen:
-        #     has_any_slope = (abs(T1_L - T1_R) > 1e-9) or (abs(T2_L - T2_R) > 1e-9)
-
-        #     # Basislinie NUR wenn KEIN Gefälle UND es einen Durchstich gibt
-        #     if (not join_only) and (not has_any_slope):
-        #         if left_clear <= 1e-12:
-        #             xa, xb = x_inner_left, xSeam
-        #             if xb - xa > 1e-9:
-        #                 msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
-        #         if p_w > 1e-9:
-        #             msp.add_lwpolyline([(xSeam, CLR_BOT), (xRightStart, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
-        #         if right_clear <= 1e-12:
-        #             xa, xb = xRightStart, x_inner_right
-        #             if xb - xa > 1e-9:
-        #                 msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
 
         if not join_only:
             y_ref = max(yTopL, yTopR)
