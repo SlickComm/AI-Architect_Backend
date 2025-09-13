@@ -1266,6 +1266,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             base1 = _base_y_with_gok(T1_ref, _gok(bg1))
             oy1   = base1 - 0.2
 
+            y_in_left  = base1 + (T1_ref - T1_L)
+            y_in_right = base1 + (T1_ref - T1_R)
+
             # Solo (kein Merge zur rechten Seite)
             draw_trench_front(
                 msp, (x_start, oy1), L1, T1_ref,
@@ -1297,6 +1300,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         diameter=d,
                         span_length=want,
                         offset=off,
+                        bottom_y_left=y_in_left,
+                        bottom_y_right=y_in_right,
                     )
                     if eff > 0:
                         aufmass.append(
@@ -1894,10 +1899,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offL = float(pipeL.get("offset", 0) or 0.0)
                 fullL, wantL = _pipe_full_and_want(pipeL)
                 effL = draw_pipe_front(
-                    msp, origin_front=(x_inner_left, CLR_BOT),
-                    trench_inner_length=L1, diameter=dL,
+                    msp,
+                    origin_front=(x_inner_left, CLR_BOT),
+                    trench_inner_length=L1,
+                    diameter=dL,
                     span_length=(None if fullL else float(pipeL.get("length"))),
                     offset=offL,
+                    bottom_y_left=y_in_L_left,
+                    bottom_y_right=y_in_L_right,
                 )
                 if effL > 0:
                     aufmass.append(f"Rohr {i+1}: l={effL} m  Ø={dL} m" + (f"  Versatz={offL} m" if offL else ""))
@@ -1910,10 +1919,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offR = float(pipeR.get("offset", 0) or 0.0)
                 fullR, wantR = _pipe_full_and_want(pipeR)
                 effR = draw_pipe_front(
-                    msp, origin_front=(xRightStart, CLR_BOT),
-                    trench_inner_length=L2, diameter=dR,
+                    msp,
+                    origin_front=(xRightStart, CLR_BOT),
+                    trench_inner_length=L2,
+                    diameter=dR,
                     span_length=(None if fullR else float(pipeR.get("length"))),
                     offset=offR,
+                    bottom_y_left=y_in_R_left,
+                    bottom_y_right=y_in_R_right,
                 )
                 if effR > 0:
                     aufmass.append(f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else ""))
