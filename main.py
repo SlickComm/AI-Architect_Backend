@@ -1012,7 +1012,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     PASS_BOTTOM_GAP = 0.5
     PASS_SYMBOL_H = 0.40  # sichtbare Höhe des Durchstich-Rechtecks in der Vorderansicht
     PASS_DIM_OFFSET = 0.50   # Abstand der Maßlinie über der Oberkante des Durchstichs
-    GOK_DIM_XSHIFT = 0.35
+    GOK_DIM_XSHIFT = 0.35   # X-Versatz der GOK-Maßlinie nach links
 
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
@@ -1182,17 +1182,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         return abs(float(a) - float(b)) < eps
 
     def _add_gok_dim(x_col: float, y_top: float, gok_val: float, side: str = "left"):
-        """
-        Zeichnet eine vertikale GOK-Bemaßung zwischen der globalen Oberkante
-        (ohne GOK) und der tatsächlichen Oberkante dieses Grabens.
-        side: "left" oder "right" steuert die Lage der Maßlinie.
-        """
         if abs(gok_val) < 1e-9:
             return
-        y_ref = CLR_BOT + MAX_DEPTH                     # globale Oberkante ohne GOK
+        y_ref = CLR_BOT + MAX_DEPTH  # globale Oberkante ohne GOK
         base_x = (x_col - (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT)) if side == "left" \
-                 else (x_col + (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT))
-        sign = "+" if gok_val >= 0 else "-"            # Vorzeichen anzeigen
+                else (x_col + (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT))
+        sign = "+" if gok_val >= 0 else "-"
         msp.add_linear_dim(
             base=(base_x, y_ref),
             p1=(x_col, y_ref),
@@ -1204,7 +1199,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 "dimexe":  DIM_EXE_OFF,
                 "dimexo":  DIM_EXE_OFF,
                 "dimtad":  0,
-                # Text ersetzen: gemessener Wert (absolut) mit GOK-Label und Vorzeichen
                 "dimpost": f"GOK {sign}<> m",
             },
             dxfattribs={"layer": LAYER_TRENCH_OUT},
@@ -1279,13 +1273,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 clearance_bottom=0.2,
                 depth_left=T1_L, depth_right=T1_R,
             )
-
-            gok1 = _gok(bg1)
-            if abs(gok1) > 1e-9 and (i+1) not in printed_gok:
-                yTop1 = (CLR_BOT + MAX_DEPTH) + gok1
-                x_col = x_start + CLR_LR                  # Innenkante links
-                _add_gok_dim(x_col, yTop1, gok1, side="left")
-                printed_gok.add(i+1)
 
             # Draufsicht (Top) – bleibt wie bisher auf gemeinsamer Y_TOP
             if (i+1) not in drawn_top:
@@ -1428,6 +1415,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             )
             drawn_top.add(i + 2)
 
+        # --- GOK-Bemaßung NUR bei verbundenen Baugräben ---
         gokL = _gok(bg1)
         if abs(gokL) > 1e-9 and (i+1) not in printed_gok:
             _add_gok_dim(x_inner_left, yTopL, gokL, side="left")
