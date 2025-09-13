@@ -1,6 +1,5 @@
-# cad/pipe.py
 import ezdxf
-from typing import Tuple, Optional
+from typing import Tuple, List, Optional
 
 # ---------------------- feste Konstanten ----------------------
 LAYER_PIPE = "Rohr"
@@ -107,3 +106,115 @@ def draw_pipe_front(
     ).render()
 
     return eff_len
+
+def draw_pipe_front_piecewise(
+    msp,
+    origin_front: Tuple[float, float],
+    trench_inner_length: float,
+    diameter: float,
+    segments: List[Tuple[float, float, float]],
+    *,
+    span_length: Optional[float] = None,   # wird bei Full-Span ignoriert
+    offset: float = 0.0,
+) -> float:
+    """
+    Zeichnet ein durchgehendes Rohr über mehrere Segmente.
+    segments: Liste von (seg_len, y0, y1) mit:
+      - seg_len: horizontale Länge des Teilstücks (m)
+      - y0: Innenboden-Höhe am Segmentanfang (globales y)
+      - y1: Innenboden-Höhe am Segmentende   (globales y)
+    Rückgabe: tatsächlich gezeichnete Länge (horizontale Projektion).
+    """
+    if trench_inner_length <= 1e-9 or diameter <= 0.0:
+        return 0.0
+
+    x0 = origin_front[0]                          # linke Innenkante des Clusters
+    # Start + Ende unter Beachtung von Randzone & optionalem Offset
+    x_start = max(x0 + CLEARANCE_SIDE, x0 + max(0.0, float(offset)))
+    x_end   = x0 + trench_inner_length - CLEARANCE_SIDE
+    if x_end - x_start <= 1e-9:
+        return 0.0
+
+    # Profil als kumulative Stützstellen (relativ zu x0) aufbauen
+    xs = [0.0]   # [0, L1, L1+L2, ...]
+    ys = []
+    acc = 0.0
+    for idx, (seg_len, y_left, y_right) in enumerate(segments):
+        if idx == 0:
+            ys.append(float(y_left))
+        acc += float(seg_len)
+        xs.append(acc)
+        ys.append(float(y_right))
+
+    # Hilfsfunktion: y am relativen x interpolieren
+    def y_at_rel(x_rel: float) -> float:
+        # Segment finden
+        if x_rel <= xs[0]: 
+            return ys[0]
+        if x_rel >= xs[-1]:
+            return ys[-1]
+        for i in range(len(xs)-1):
+            if xs[i] <= x_rel <= xs[i+1]:
+                if abs(xs[i+1] - xs[i]) < 1e-12:
+                    return ys[i]
+                t = (x_rel - xs[i]) / (xs[i+1] - xs[i])
+                return ys[i] + t * (ys[i+1] - ys[i])
+        return ys[-1]
+
+    # Trim auf [x_start, x_end]
+    start_rel = x_start - x0
+    end_rel   = x_end   - x0
+    if end_rel - start_rel <= 1e-9:
+        return 0.0
+
+    # Bodenpunkte: Start, alle Breakpoints im Intervall, Ende
+    bottom_pts: List[Tuple[float, float]] = []
+    top_pts:    List[Tuple[float, float]] = []
+
+    def absx(x_rel: float) -> float:
+        return x0 + x_rel
+
+    # Start
+    y_s = y_at_rel(start_rel)
+    bottom_pts.append((absx(start_rel), y_s))
+
+    # innere Stützstellen
+    for j in range(1, len(xs)-0):  # xs[1..-1] sind potenzielle Breakpoints
+        xr = xs[j]
+        if start_rel < xr < end_rel:
+            bottom_pts.append((absx(xr), ys[j]))
+
+    # Ende
+    y_e = y_at_rel(end_rel)
+    bottom_pts.append((absx(end_rel), y_e))
+
+    # Top-Punkte (gleiche x, +Durchmesser), in umgekehrter Reihenfolge fürs Polygon
+    for (xb, yb) in reversed(bottom_pts):
+        top_pts.append((xb, yb + float(diameter)))
+
+    # Polygon (Parallelogrammzug) schließen
+    poly = bottom_pts + top_pts
+    msp.add_lwpolyline(poly, close=True, dxfattribs={"layer": LAYER_PIPE})
+
+    # Symmetrie-Linie als Polyline über die gleichen Stützstellen
+    mid_pts = [(x, y + float(diameter)/2.0) for (x, y) in bottom_pts]
+    msp.add_lwpolyline(mid_pts, dxfattribs={"layer": LAYER_SYM})
+
+    # Längenmaß (horizontal)
+    dim_y_base = min(y_s, y_e) - DIM_OFFSET
+    msp.add_linear_dim(
+        base=(absx(start_rel), dim_y_base),
+        p1=(absx(start_rel), y_s),
+        p2=(absx(end_rel),   y_e),
+        angle=0,
+        override={
+            "dimtxt": DIM_TXT_H,
+            "dimclrd": 3,
+            "dimexe": DIM_EXE_OFF,
+            "dimexo": DIM_EXE_OFF,
+            "dimtad": 0,
+        },
+        dxfattribs={"layer": LAYER_DIM},
+    ).render()
+
+    return (x_end - x_start)
