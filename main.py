@@ -464,10 +464,28 @@ def _num_to_meters(x) -> Optional[float]:
         return float(m.group(1))/1000.0
     return None
 
+def _to_meters(val) -> float:
+    # gleiche Logik wie bei length/width/diameter: Komma -> Punkt, Einheiten m/cm/mm
+    if val is None: return 0.0
+    if isinstance(val, (int, float)): return float(val)
+    s = str(val).strip().lower().replace(",", ".")
+    mul = 1.0
+    if s.endswith("mm"): mul, s = 0.001, s[:-2]
+    elif s.endswith("cm"): mul, s = 0.01, s[:-2]
+    elif s.endswith("m"):  mul, s = 1.0, s[:-1]
+    try:
+        return float(s) * mul
+    except Exception:
+        return 0.0
+
 def _coerce_updates(upd: dict) -> dict:
     out = {}
     for k, v in (upd or {}).items():
         key = FIELD_ALIASES.get(_norm_text(k), k)
+        if key in ("gok", "geländeoberkante", "gelaendeoberkante"):
+            out["gok"] = _to_meters(v)
+            continue
+
         if key in {"length","width","depth","diameter","offset"}:
             mv = _num_to_meters(v)
             if mv is not None:
@@ -992,6 +1010,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     GAP_BG    = 1.50    # Abstand zwischen zwei Baugräben
     TOP_SHIFT = 1.50    # Abstand Draufsicht → Vorderansicht
     PASS_BOTTOM_GAP = 0.5
+    PASS_SYMBOL_H = 0.40  # sichtbare Höhe des Durchstich-Rechtecks in der Vorderansicht
+    PASS_DIM_OFFSET = 0.50   # Abstand der Maßlinie über der Oberkante des Durchstichs
+    GOK_DIM_XSHIFT = 0.35   # X-Versatz der GOK-Maßlinie nach links
 
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
@@ -1065,7 +1086,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             line += f"  GOK={sign}{gok} m"
         aufmass.append(line)
 
-
     # Hilfsfunktion am Anfang von _generate_dxf_intern definieren (oder lokal im Block):
     def _is_join_only(seam_idx: int) -> bool:
         # True, wenn an Naht seam_idx nur "Verbindung" existiert (kein Durchstich)
@@ -1078,6 +1098,38 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             full = True
         return full, (None if full else L)
 
+    def _hatch_poly(pts):
+        h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
+        angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
+        h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE, angle=angle)
+        cx = sum(p[0] for p in pts)/len(pts); cy = sum(p[1] for p in pts)/len(pts)
+        try: h.set_pattern_origin((cx, cy))
+        except AttributeError: pass
+        h.paths.add_polyline_path(pts, is_closed=True)
+
+    # NEU: Rechteck-Symbol für Durchstich (Frontansicht)
+    def _draw_pass_symbol_rect(x0: float, x1: float, *, pattern: str | None = None, y_top: float | None = None):
+        if x1 - x0 <= 1e-9:
+            return
+        if y_top is None:
+            # Fallback: unten ankern (alt)
+            y0 = CLR_BOT + PASS_BOTTOM_GAP
+            y1 = y0 + PASS_SYMBOL_H
+        else:
+            # NEU: oben ankern
+            y1 = y_top   # knapp unter der Oberkante „kleben“
+            y0 = y1 - PASS_SYMBOL_H
+
+        msp.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+        pat = (pattern or HATCH_PATTERN)
+        h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
+        angle = 45.0 if pat.upper() == "EARTH" else 0.0
+        h.set_pattern_fill(pat, scale=HATCH_SCALE, angle=angle)
+        try: h.set_pattern_origin(((x0+x1)/2, (y0+y1)/2))
+        except AttributeError: pass
+        h.paths.add_polyline_path([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], is_closed=True)
+
     # --- Neu: Positions- & Duplikat-Tracking ---
     trench_origin_x: dict[int, float] = {}  # 0-basierter Index -> Außen-Links-X in der Vorderansicht
     drawn_top: set[int] = set()             # 1-basierte Indizes: Draufsicht schon gezeichnet?
@@ -1086,6 +1138,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     printed_trench: set[int] = set()        # 1-basierte Indizes: Aufmaß "Baugraben N" schon geschrieben?
     printed_pass: set[int] = set()          # 1-basierte Naht-Indizes: Aufmaß "Durchstich N" schon geschrieben?
     printed_depth: set[int] = set()
+    printed_gok: set[int] = set()          # 1-basierte Indizes: Aufmaß "GOK N" schon geschrieben?
     skip_single_next = False                # rechter Graben des letzten Merges schon gezeichnet -> Solo überspringen
 
     # --- Tiefenmaße im Merge (Durchstich ODER Verbindung) ----------------------
@@ -1105,8 +1158,51 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             dxfattribs={"layer": LAYER_TRENCH_OUT},
         ).render()
 
+    def _add_pass_len_dim(x0: float, x1: float, y_ref: float):
+        """
+        Horizontales Maß über dem Durchstich (x0..x1) an der Oberkante y_ref.
+        """
+        y_dim = y_ref + PASS_DIM_OFFSET
+        msp.add_linear_dim(
+            base=(x0, y_dim),           # Lage der Maßlinie (y-Distanz ist entscheidend)
+            p1=(x0, y_ref),             # linker Bezugspunkt
+            p2=(x1, y_ref),             # rechter Bezugspunkt
+            angle=0,                    # horizontal
+            override={
+                "dimtxt":  DIM_TXT_H,   # Textgröße wie bei deinen anderen Maßen
+                "dimclrd": 3,           # grün wie in deinen Screenshots
+                "dimexe":  DIM_EXE_OFF, # keine Überstände
+                "dimexo":  DIM_EXE_OFF, # kein Abstand der Hilfslinien
+                "dimtad":  0,           # Text auf der Maßlinie
+            },
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
+
     def _same(a, b, eps=1e-6):
         return abs(float(a) - float(b)) < eps
+
+    def _add_gok_dim(x_col: float, y_top: float, gok_val: float, side: str = "left"):
+        if abs(gok_val) < 1e-9:
+            return
+        y_ref = CLR_BOT + MAX_DEPTH  # globale Oberkante ohne GOK
+        base_x = (x_col - (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT)) if side == "left" \
+                else (x_col + (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT))
+        sign = "+" if gok_val >= 0 else "-"
+        msp.add_linear_dim(
+            base=(base_x, y_ref),
+            p1=(x_col, y_ref),
+            p2=(x_col, y_top),
+            angle=90,
+            override={
+                "dimtxt":  DIM_TXT_H,
+                "dimclrd": 3,
+                "dimexe":  DIM_EXE_OFF,
+                "dimexo":  DIM_EXE_OFF,
+                "dimtad":  0,
+                "dimpost": f"GOK {sign}<> m",
+            },
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
 
     # NEU: gemeinsamer Bottom-Offset je Graben, damit die Oberkante auf gleicher Höhe liegt
     def _base_y(depth_ref: float) -> float:
@@ -1135,6 +1231,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
     MAX_DEPTH = max(_depths(t)[0] for t in trenches)
     MAX_GOK   = max(_gok(t) for t in trenches) if trenches else 0.0
+    EPS = 1e-3  # ~1 mm Anti-Z-Fighting
 
     Y_TOP = CLR_BOT + TOP_SHIFT + MAX_DEPTH + max(0.0, MAX_GOK)
 
@@ -1276,12 +1373,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         left_clear  = 0.0 if has_pass_left  else CLR_LR
         right_clear = 0.0 if has_pass_right else CLR_LR
 
-        # Geometrie / Koordinaten (gemeinsame Oberkante)
-        # baseL = _base_y(T1_ref)
-        # baseR = _base_y(T2_ref)
-        # yTopL = baseL + T1_ref
-        # yTopR = baseR + T2_ref
-
         baseL = _base_y_with_gok(T1_ref, _gok(bg1))
         baseR = _base_y_with_gok(T2_ref, _gok(bg2))
         yTopL = baseL + T1_ref
@@ -1308,20 +1399,32 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if (i + 1) not in drawn_top:
             draw_trench_top(
                 msp, top_left_1, length=L1, width=B1,
-                clip_left=(join_L and join_only),
-                clip_right=(join_M and join_only),
+                clip_left=join_L,          # vorher: (join_L and join_only)
+                clip_right=join_only,      # vorher: (join_M and join_only)
                 dim_right=False
             )
             drawn_top.add(i + 1)
 
+        # --- Draufsicht Baugraben 2 (rechts vom aktuellen Merge 1|2)
         if (i + 2) not in drawn_top:
             draw_trench_top(
                 msp, top_left_2, length=L2, width=B2,
-                clip_left=(join_M and join_only),
-                clip_right=(join_R and join_only),
+                clip_left=join_only,       # vorher: (join_M and join_only)
+                clip_right=join_R,         # vorher: (join_R and join_only)
                 dim_right=(i + 2 == len(trenches))
             )
             drawn_top.add(i + 2)
+
+        # --- GOK-Bemaßung NUR bei verbundenen Baugräben ---
+        gokL = _gok(bg1)
+        if abs(gokL) > 1e-9 and (i+1) not in printed_gok:
+            _add_gok_dim(x_inner_left, yTopL, gokL, side="left")
+            printed_gok.add(i+1)
+
+        gokR = _gok(bg2)
+        if abs(gokR) > 1e-9 and (i+2) not in printed_gok:
+            _add_gok_dim(x_inner_right, yTopR, gokR, side="right")
+            printed_gok.add(i+2)
 
         # --- Nahtlinie in der Draufsicht (nur im NICHT-überlappenden Bereich) ---
         # In der Überlappung (0 .. min(B1,B2)) gibt es KEINE Linie.
@@ -1347,8 +1450,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         "material": s.get("material", "")
                     } for s in seg_list_L],
                     add_dims=True,
-                    clip_left=(join_L and join_only),
-                    clip_right=(join_M and join_only),
+                    clip_left=join_L,
+                    clip_right=join_only,
                 )
                 _append_surface_segments_aufmass(
                     i+1, seg_list_L, aufmass, L1, B1,
@@ -1382,8 +1485,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         "material": s.get("material", "")
                     } for s in seg_list_R],
                     add_dims=True,
-                    clip_left=(join_M and join_only),
-                    clip_right=(join_R and join_only),
+                    clip_left=join_only,
+                    clip_right=join_R,
                 )
                 _append_surface_segments_aufmass(
                     i+2, seg_list_R, aufmass, L2, B2,
@@ -1456,18 +1559,6 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         if not has_pass_right:
             msp.add_lwpolyline([(xR, y_out_R), (xR, yTopR)], dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # -----------------------------
-        # RAND-SCHRAFFUR (Verbindung)
-        # -----------------------------
-        def _hatch_poly(pts):
-            h = msp.add_hatch(dxfattribs={"layer": LAYER_HATCH})
-            angle = 45.0 if HATCH_PATTERN.upper() == "EARTH" else 0.0
-            h.set_pattern_fill(HATCH_PATTERN, scale=HATCH_SCALE, angle=angle)
-            cx = sum(p[0] for p in pts)/len(pts); cy = sum(p[1] for p in pts)/len(pts)
-            try: h.set_pattern_origin((cx, cy))
-            except AttributeError: pass
-            h.paths.add_polyline_path(pts, is_closed=True)
-
         # --- Innen-/Außenboden-Niveaus LINKS/RECHTS (jeweils am Rand bzw. an der Naht)
         y_in_L_left   = baseL + (T1_ref - T1_L)
         y_in_L_right  = baseL + (T1_ref - T1_R)
@@ -1480,7 +1571,15 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         y_out_R_right = y_in_R_right - CLR_BOT
 
         # Gibt es an der Naht wirklich eine Außen-Stufe?
-        has_step = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
+        #has_step = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
+        has_step = abs(y_out_L_right - y_out_R_left) > 1e-9
+        step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR) if has_step else 0.0
+
+        x_join_R = xSeam + (step_dir_R if has_step else 0.0)
+
+        # Stufen-Vertikale an linker / rechter Lückenkante (bei Verbindung identisch)
+        x_step_out_L = xSeam       + step_dir_R
+        x_step_out_R = xRightStart + step_dir_R
 
         step_dir = 0.0
         if has_step:
@@ -1488,78 +1587,99 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
         x_step_out = xSeam + step_dir
 
-        # --- NEU: Stufe an der OBERKANTE bei Verbindungen, wenn GOK differiert ---
-        has_top_step = join_only and (abs(yTopL - yTopR) > 1e-9)
-        if has_top_step:
-            step_dir_top = (CLR_LR if (yTopL <= yTopR + 1e-9) else -CLR_LR)
-        else:
-            step_dir_top = 0.0
+        # --- OBERKANTE (Front) exakt wie in der Draufsicht zeichnen ---
+        has_top_step = abs(yTopL - yTopR) > 1e-9
 
-        # Horizontaler Versatz der Top-Stufe (nur Verbindung)
-        top_off = step_dir_top if join_only else 0.0
+        # Enden der Top-Linien liegen an den Naht-X (nicht an x_step_out_*)
+        x_left_end_top    = xSeam
+        x_right_start_top = xRightStart   # bei Verbindung = xSeam, bei Durchstich echte Lücke
 
-        # Treffpunkte der Oberkante an der Naht
-        x_left_end_top     = xSeam       + top_off
-        x_right_start_top  = xRightStart + top_off  # identisch zu x_left_end_top
-
-        # Linkes Stück bis zur Naht/Stufe
+        # linkes Top-Stück
         msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
-                           dxfattribs={"layer": LAYER_TRENCH_OUT})
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # Rechtes Stück ab Naht/Stufe
+        # rechtes Top-Stück
         msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
-                           dxfattribs={"layer": LAYER_TRENCH_OUT})
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
 
-        # Vertikale Stufe an der Oberkante einziehen (nur Verbindung mit GOK-Unterschied)
+        # vertikale Top-Stufe(n) genau auf der/den Naht(en)
         if has_top_step:
+            msp.add_lwpolyline([(xSeam,        min(yTopL, yTopR)),
+                                (xSeam,        max(yTopL, yTopR))],
+                                dxfattribs={"layer": LAYER_TRENCH_OUT})
+            if not join_only:
+                msp.add_lwpolyline([(xRightStart, min(yTopL, yTopR)),
+                                    (xRightStart, max(yTopL, yTopR))],
+                                    dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Brücke auf der höheren Oberkante zwischen den Nähten
+        if x_right_start_top - x_left_end_top > 1e-9:
+            msp.add_lwpolyline([(x_left_end_top,  max(yTopL, yTopR)),
+                                (x_right_start_top, max(yTopL, yTopR))],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # falls später genutzt (z. B. linke Nachbar-Naht):
+        top_off = 0.0  # x_left_end_top - xSeam == 0 ⇒ keine seitliche Verschiebung
+
+        # --- kleines Top-Zwischenstück an der linken Nachbar-Naht (nur bei Höhenstufe) ---
+        if i > 0 and join_L:
+            bg0 = trenches[i-1]
+            T0_ref, T0_L, T0_R = _depths(bg0)
+            base0 = _base_y_with_gok(T0_ref, _gok(bg0))
+            yTop0 = base0 + T0_ref
+            yTop1 = yTopL
+
+            if abs(yTop0 - yTop1) > 1e-9:
+                # Horizontaler Versatz an der linken Stufe (+/- CLR_LR)
+                top_off_L = (CLR_LR if (yTop0 <= yTop1 + 1e-9) else -CLR_LR)
+
+                # Start nie links der Außenkante
+                x_left_mid_top = max(x_start + top_off_L, xL)
+
+                # Ende STRENG an der Naht und niemals darüber (gegen "Nase")
+                x_right_mid_top = min(xSeam, xRightStart) - EPS
+
+                if x_right_mid_top - x_left_mid_top > 1e-9:
+                    msp.add_lwpolyline(
+                        [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT},
+                    )
+
+        # Nur die horizontalen Randbänder außen – die schrägen Linien kommen
+        # unten in "LINKE/RECHTE SCHRÄGE" mit sauberem Clipping.
+        if not has_pass_left:
+            msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        if not has_pass_right:
+            msp.add_lwpolyline([(x_inner_right, y_out_R_right), (xR, y_out_R_right)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Stufen-Vertikalen an der Lückenkante:
+        #  - LINKE KANTE: IMMER zeichnen (auch bei Durchstich) → schließt die Kontur (grüne Linie)
+        #  - RECHTE KANTE: nur bei reiner Verbindung, um Doppel-Linien zu vermeiden
+        if has_step:
+            # linke Lückenkante (an der Naht)
             msp.add_lwpolyline(
-                [(x_left_end_top, min(yTopL, yTopR)), (x_left_end_top, max(yTopL, yTopR))],
+                [(x_step_out_L, min(y_out_L_right, y_out_R_left)),
+                (x_step_out_L, max(y_out_L_right, y_out_R_left))],
                 dxfattribs={"layer": LAYER_TRENCH_OUT}
             )
 
-        if (not join_only) and (xRightStart - xSeam) > EPS:
-            y_bridge = max(yTopL, yTopR)
-            msp.add_lwpolyline([(xSeam, y_bridge), (xRightStart, y_bridge)],
-                            dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        if i > 0 and join_L:
-            # Top-Stufe an der linken Naht über GOK prüfen
-            bg0 = trenches[i-1]
-            T0_ref, T0_L, T0_R = _depths(bg0)
-            base0  = _base_y_with_gok(T0_ref, _gok(bg0))
-            yTop0  = base0 + T0_ref
-            yTop1  = yTopL  # (mittlerer Graben links)
-
-            top_off_L = 0.0
-            if abs(yTop0 - yTop1) > 1e-9:
-                top_off_L = (CLR_LR if (yTop0 <= yTop1 + 1e-9) else -CLR_LR)
-
-            x_left_mid_top  = x_start     + top_off_L
-            x_right_mid_top = xRightStart + top_off
-
-            if x_right_mid_top - x_left_mid_top > 1e-9:
+            # rechte Lückenkante nur ohne Durchstich
+            if join_only:
                 msp.add_lwpolyline(
-                    [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
-                    dxfattribs={"layer": LAYER_TRENCH_OUT},
+                    [(x_step_out_R, min(y_out_L_right, y_out_R_left)),
+                    (x_step_out_R, max(y_out_L_right, y_out_R_left))],
+                    dxfattribs={"layer": LAYER_TRENCH_OUT}
                 )
-
-        # ----- Join/Clip für die Außen-Unterkante bestimmen -----
-        EPS = 1e-3  # ~1 mm Anti-Z-Fighting
-
-        # Rechte Naht BG1|BG2 (aktuell)
-        has_step_R = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
-        step_dir_R = 0.0
-        if has_step_R:
-            # links tiefer/gleich -> Stufe nach rechts (+CLR_LR), sonst nach links (-CLR_LR)
-            step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
-        x_join_R = xSeam + (step_dir_R if has_step_R else 0.0)
 
         cap_left   = 0.0
         step_dir_L = 0.0
         if i > 0 and join_L:
             bg_prev = trenches[i-1]
             Tp_ref, Tp_L, Tp_R = _depths(bg_prev)
-            base_p = _base_y(Tp_ref)
+            base_p = _base_y_with_gok(Tp_ref, _gok(bg_prev))
             y_out_prev_right = (base_p + (Tp_ref - Tp_R)) - CLR_BOT
             y_out_mid_left   = (baseL  + (T1_ref - T1_L)) - CLR_BOT
 
@@ -1609,33 +1729,36 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         xR1_raw, yR1_raw = x_inner_right, y_out_R_right
 
         # Stufe an der aktuellen (rechten) Naht?
-        start_cap_R = (CLR_LR if (join_only and step_dir_R < 0) else 0.0)  # Start kappen, wenn Stufe nach LINKS
-        end_cap_R   = (CLR_LR if (join_only and step_dir_R > 0) else 0.0)  # Ende  kappen, wenn Stufe nach RECHTS
+        # start_cap_R = (CLR_LR if (join_only and step_dir_R < 0) else 0.0)
+        # end_cap_R   = (CLR_LR if (join_only and step_dir_R > 0) else 0.0)
 
-        xR0 = xR0_raw + start_cap_R + (EPS if start_cap_R > 0 else 0.0)
-        xR1 = xR1_raw - end_cap_R   - (EPS if end_cap_R   > 0 else 0.0)
+        # Gap-Fix: Überlappung (−EPS/+EPS invertieren)
+        xR0_raw, yR0_raw = x_join_R,      y_out_R_left
+        xR1_raw, yR1_raw = x_inner_right, y_out_R_right
 
-        # --- NEU: Look-ahead auf die NÄCHSTE Naht rechts (BG2 | BG3) -----------------
-        # Nur wenn rechts tatsächlich wieder verbunden wird (join_R) und BG3 existiert
+        # Start exakt an die Stufen-Vertikale kleben, damit keine Lücke entsteht
+        if join_only and has_step:
+            # Stufen-Vertikale rechts liegt bei x_step_out_R
+            xR0 = x_step_out_R - EPS      # kleine Überlappung in die Stufe
+            xR1 = xR1_raw                 # Ende wird ggf. unten (Look-ahead) beschnitten
+        else:
+            xR0 = xR0_raw
+            xR1 = xR1_raw
+
+        # --- Look-ahead auf die nächste Naht rechts (BG2 | BG3) wie bisher ---
         if join_R and (i + 2) < len(trenches):
-            bg_next = trenches[i + 2]                          # BG3
+            bg_next = trenches[i + 2]
             Tn_ref, Tn_L, Tn_R = _depths(bg_next)
-            base_n = _base_y(Tn_ref)
-
-            # Außen-Unterkanten an der nächsten Naht (linke Seite = BG2 rechts)
+            base_n = _base_y_with_gok(Tn_ref, _gok(bg_next))
             y_out_next_left = (base_n + (Tn_ref - Tn_L)) - CLR_BOT
             has_step_next   = abs(y_out_R_right - y_out_next_left) > 1e-9
-
-            x_seam_next = xRightStart + L2                      # Naht BG2|BG3
+            x_seam_next = xRightStart + L2
             if has_step_next:
                 step_dir_next = (CLR_LR if (y_out_R_right <= y_out_next_left + 1e-9) else -CLR_LR)
-                x_join_next   = x_seam_next + step_dir_next     # Vertikale der Außenstufe an der nächsten Naht
-
-                # Stufe an der nächsten Naht nach LINKS -> unsere Linie dort abschneiden
+                x_join_next   = x_seam_next + step_dir_next
                 if step_dir_next < 0:
                     xR1 = min(xR1, x_join_next - EPS)
             else:
-                # keine Stufe -> bis zur nächsten Naht schneiden
                 xR1 = min(xR1, x_seam_next - EPS)
 
         # y-Koordinaten zu den ggf. geclippten x berechnen
@@ -1649,28 +1772,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         yR1 = _y_on_line(xR0_raw, yR0_raw, xR1_raw, yR1_raw, xR1)
 
         if xR1 - xR0 > EPS:
-            msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # UNTERKANTE außen – folgt dem Gefälle; nur an den Cluster-Außenrändern zeichnen
-        # Linke Seite (nur wenn links kein weiterer Merge anliegt)
-        if not has_pass_left:
-            # 1) linkes Randband (horizontal)
-            msp.add_lwpolyline([(xL, y_out_L_left), (x_inner_left, y_out_L_left)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            # 2) bis zur Naht (schräg bei Gefälle)
-            msp.add_lwpolyline([(x_inner_left, y_out_L_left), (x_step_out, y_out_L_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Rechte Seite (nur wenn rechts kein weiterer Merge anliegt)
-        if not has_pass_right:
-            # 3) ab Naht (schräg bei Gefälle)
-            msp.add_lwpolyline([(x_step_out, y_out_R_left), (x_inner_right, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-            # 4) rechtes Randband (horizontal)
-            msp.add_lwpolyline([(x_inner_right, y_out_R_right), (xR, y_out_R_right)], dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Vertikale der Außenstufe nur, wenn wirklich Versatz vorliegt
-        if has_step:
-            y_hi = max(y_out_L_right, y_out_R_left)
-            y_lo = min(y_out_L_right, y_out_R_left)
-            msp.add_lwpolyline([(x_step_out, y_lo), (x_step_out, y_hi)], dxfattribs={"layer": LAYER_TRENCH_OUT})
+            msp.add_lwpolyline([(xR0, yR0), (xR1, yR1)],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
 
         # --- Innenbodenlinien MIT Gefälle (bereits vorhanden) ---
         msp.add_lwpolyline([(x_inner_left, y_in_L_left), (xSeam,        y_in_L_right)], dxfattribs={"layer": LAYER_TRENCH_IN})
@@ -1725,40 +1828,17 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             y_hi = max(y_out_L_right, y_out_R_left)
             _hatch_poly([(x0, y_lo), (x1, y_lo), (x1, y_hi), (x0, y_hi)])
 
-        # -----------------------------
-        # Durchstich (nur wenn vorhanden) + Basislinie/Hatch NUR dann
-        # -----------------------------
         if not join_only:
-            # Pass-Schraffur
-            draw_pass_front(
-                msp,
-                trench_origin=(x_start, 0.0),
-                trench_len=L1 + p_w + L2,
-                trench_depth=max(T1_ref, T2_ref),
-                width=p_w,
-                offset=p_off,
-                clearance_left=left_clear,
-                clearance_bottom=CLR_BOT,
-                pattern=pas.get("pattern", HATCH_PATTERN),
-                hatch_scale=HATCH_SCALE,
-                seed_point=(0.0, 0.0),
+            y_ref = max(yTopL, yTopR)
+            # an die Oberkante in der Lücke (Brücke liegt auf max(yTopL, yTopR))
+            _draw_pass_symbol_rect(
+                xSeam, xRightStart,
+                pattern=pas.get("pattern"),
+                y_top=max(yTopL, yTopR)
             )
 
-            # ... direkt vor den Basislinien ergänzen:
-            has_any_slope = (abs(T1_L - T1_R) > 1e-9) or (abs(T2_L - T2_R) > 1e-9)
-
-            # Basislinie NUR wenn KEIN Gefälle UND es einen Durchstich gibt
-            if (not join_only) and (not has_any_slope):
-                if left_clear <= 1e-12:
-                    xa, xb = x_inner_left, xSeam
-                    if xb - xa > 1e-9:
-                        msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
-                if p_w > 1e-9:
-                    msp.add_lwpolyline([(xSeam, CLR_BOT), (xRightStart, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
-                if right_clear <= 1e-12:
-                    xa, xb = xRightStart, x_inner_right
-                    if xb - xa > 1e-9:
-                        msp.add_lwpolyline([(xa, CLR_BOT), (xb, CLR_BOT)], dxfattribs={"layer": LAYER_TRENCH_IN})
+            # Maß für die Durchstich-Länge
+            _add_pass_len_dim(xSeam, xRightStart, y_ref)
 
         # -----------------------------
         # Rohr(e)
@@ -1876,7 +1956,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
         # Bookkeeping / Cursor / Skip
         trench_origin_x[i]   = x_start
-        trench_origin_x[i+1] = x_start + left_clear + L1
+        trench_origin_x[i+1] = xRightStart
         cursor_x = max(cursor_x, x_inner_right + right_clear + GAP_BG)
         skip_single_next = True
         i += 1
@@ -1914,6 +1994,12 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 # -----------------------------------------------------
 # Edit Element
 # -----------------------------------------------------
+_BG_IDX_RE = re.compile(r'\b(?:bg|baugraben)\s*([1-9]\d*)\b', re.I)
+
+def _explicit_trench_from_instruction(instr: str) -> int | None:
+    m = _BG_IDX_RE.search(instr or "")
+    return int(m.group(1)) if m else None
+
 @app.post("/edit-element")
 def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     session = session_manager.get_session(session_id)
@@ -1936,6 +2022,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     Setze „depth“ NICHT zusätzlich; das System berücksichtigt die größte Tiefe intern.
     • Formulierungen mit „weitere Tiefe“ / „zusätzliche Tiefe“ sind KEINE neuen Objekte,
     sondern ein Feld-Update (z. B. set.depth_right = …).
+    • GOK (Geländeoberkante): negative/positive Werte in m sind zulässig.
 
     BEISPIELE (sehr wichtig)
     Eingabe: "Füge zum ersten Baugraben eine weitere Tiefe rechts mit 1,50 m hinzu."
@@ -1944,6 +2031,20 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     "selection": {{ "type": "Baugraben", "trench_index": 1 }},
     "set": {{ "depth_right": 1.5 }},
     "answer": "Tiefe rechts bei Baugraben 1 auf 1,50 m gesetzt."
+    }}
+    Eingabe: "Ändere bei Bg3 GOK auf -0,3"
+    Antwort:
+    {{
+    "selection": {{ "type": "Baugraben", "trench_index": 3 }},
+    "set": {{ "gok": -0.3 }},
+    "answer": "GOK bei Baugraben 3 auf -0,30 m gesetzt."
+    }}
+    Eingabe: "Setze bei Bg2 GOK auf -0,30 m"
+    Antwort:
+    {{
+    "selection": {{ "type": "Baugraben", "trench_index": 2 }},
+    "set": {{ "gok": -0.30 }},
+    "answer": "GOK bei Baugraben 2 auf -0,30 m gesetzt."
     }}
 
     ADRESSIERUNG
@@ -1964,7 +2065,7 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     • KEIN 'trench_index' bei Nicht-Baugraben setzen.
 
     ERLAUBTE ÄNDERUNGEN
-    length | width | depth | depth_left | depth_right | diameter | material | offset | pattern
+    length | width | depth | depth_left | depth_right | gok | diameter | material | offset | pattern
     • „DN300“ o. ä. → diameter = 0.30 (Meter).
     • Komma-/Punktwerte und Einheiten mm/cm/m korrekt interpretieren.
 
@@ -2007,8 +2108,25 @@ def edit_element(session_id: str, instruction: str = Body(..., embed=True)):
     sel["type"] = _normalize_type_aliases(sel["type"])
     updates = _coerce_updates(updates_raw)
 
+    explicit_bg = _explicit_trench_from_instruction(instruction)
+    if explicit_bg is not None and sel.get("type","").lower().startswith("baugraben"):
+        sel["trench_index"] = explicit_bg
+
+    if ("gok" not in updates
+        and sel.get("type","").lower().startswith("baugraben")
+        and re.search(r"\b(lösch(e)?|entfern(e)?|reset(te)?)\b.*\bgok\b", instruction.lower())):
+        updates["gok"] = 0.0
+
     # 2) Ziel finden (LLM-Auswahl → Backend-Heuristik als Fallback)
     elems = session.setdefault("elements", [])
+    count_trenches = sum(1 for e in elems if (e.get("type","") or "").lower().startswith("baugraben"))
+
+    # Harte Validierung: es muss existieren
+    if sel.get("type","").lower().startswith("baugraben"):
+        ti = int(sel.get("trench_index") or 0)
+        if ti < 1 or ti > count_trenches:
+            raise HTTPException(404, f"Baugraben {ti} existiert nicht (1..{count_trenches}).")
+
     idx = _find_target_index_by_selection(elems, sel)
     if idx is None:
         idx = _resolve_selection_heuristic(elems, sel)
@@ -2051,6 +2169,14 @@ ZIEL
   „Oberfläche“/„Pflaster“/„Gehwegplatten“ → Oberflächenbefestigung.
   „Verbindung/verbinde/Verbund/connect“ → Verbindung.
 
+SONDERFALL
+• Wenn der Text das Löschen/Entfernen/Zurücksetzen von „GOK“ bei einem Baugraben verlangt
+  (z. B. „Lösche GOK bei Bg2“, „entferne die Geländeoberkante bei BG 1“),
+  ERZEUGE KEINE LÖSCHUNG. Gib stattdessen:
+  - selection.type = "Baugraben", selection.trench_index = N
+  - mode = "reset_gok"
+  (Die Logik setzt GOK intern auf 0,00 m zurück.)
+
 ADRESSIERUNG
 • "Baugraben N"             → selection.trench_index = N
 • "Rohr im/zu BG N"         → selection.for_trench = N
@@ -2065,6 +2191,16 @@ MODUS
   (z. B. „Lösche alle Oberflächen in BG 2“, „Entferne alle Durchstiche“, „Lösche alle Verbindungen“),
   setze "mode": "bulk".
 • Sonst "mode": "single".
+• Für den SONDERFALL oben verwende "mode": "reset_gok".
+
+BEISPIELE
+Eingabe: "Lösche GOK bei Bg2"
+Antwort:
+{{
+  "selection": {{ "type": "Baugraben", "trench_index": 2 }},
+  "mode": "reset_gok",
+  "answer": "GOK bei Baugraben 2 auf 0,00 m zurückgesetzt."
+}}
 
 ANTWORTFORMAT (exakt so!):
 {{
@@ -2103,7 +2239,7 @@ ANTWORTFORMAT (exakt so!):
     # 1) Normalisieren
     sel["type"] = _normalize_type_aliases(sel["type"])
     mode = (data.get("mode") or "single").lower()
-    if mode not in ("single", "bulk"):
+    if mode not in ("single", "bulk", "reset_gok"):
         mode = "single"
 
     elems = session.setdefault("elements", [])
@@ -2147,20 +2283,39 @@ ANTWORTFORMAT (exakt so!):
             b = s.get("between", None)
             return (b is None) or (int(e.get("between", -1)) == int(b))
 
+        if mode != "reset_gok" and re.search(r"\b(lösch(e|en)?|entfern(e|en)?|reset(te|ten)?|zurücksetz(e|en)?)\b.*\b(gok|gel[äa]ndeoberkante)\b", instruction, re.I):
+            mode = "reset_gok"
+            m = re.search(r"\b(?:bg|baugraben)\s*([1-9]\d*)\b", instruction, re.I)
+            if m:
+                sel["trench_index"] = int(m.group(1))
+                sel["type"] = "Baugraben"
+
         return False
 
     deleted = 0
 
     # 2) Löschen
-    if mode == "single":
-        # Primär LLM-Selektion, Fallback Heuristik
+    # --- Aktion: reset_gok VOR den Löschzweigen behandeln ---
+    if mode == "reset_gok":
         idx = _find_target_index_by_selection(elems, sel)
         if idx is None:
             idx = _resolve_selection_heuristic(elems, sel)
         if idx is None:
             raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
 
-        # Safety: Meta-Typen nicht löschen
+        if (elems[idx].get("type","") or "").lower().startswith("baugraben"):
+            elems[idx]["gok"] = 0.0
+        else:
+            raise HTTPException(400, "GOK-Reset ist nur für Baugräben zulässig.")
+
+    # --- 2) Löschen ---
+    elif mode == "single":
+        idx = _find_target_index_by_selection(elems, sel)
+        if idx is None:
+            idx = _resolve_selection_heuristic(elems, sel)
+        if idx is None:
+            raise HTTPException(404, f"Zielobjekt nicht gefunden für selection={sel}")
+
         t_low = (elems[idx].get("type","") or "").lower()
         if t_low in ("aufmass", "aufmass_override"):
             raise HTTPException(400, "Dieses Element ist nicht löschbar.")
@@ -2168,7 +2323,7 @@ ANTWORTFORMAT (exakt so!):
         del elems[idx]
         deleted = 1
 
-    else:  # bulk
+    elif mode == "bulk":
         to_delete = [i for i, e in enumerate(elems) if _matches_bulk(e, sel)]
         if not to_delete:
             raise HTTPException(404, f"Keine passenden Elemente für bulk selection={sel} gefunden.")
@@ -2184,6 +2339,7 @@ ANTWORTFORMAT (exakt so!):
     return {
         "status": "ok",
         "deleted": deleted,
+
         "updated_json": session,
         "answer": data.get("answer", "")
     }
