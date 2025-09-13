@@ -1012,6 +1012,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     PASS_BOTTOM_GAP = 0.5
     PASS_SYMBOL_H = 0.40  # sichtbare Höhe des Durchstich-Rechtecks in der Vorderansicht
     PASS_DIM_OFFSET = 0.50   # Abstand der Maßlinie über der Oberkante des Durchstichs
+    GOK_DIM_XSHIFT = 0.35
 
     cursor_x = 0.0      # X-Versatz des nächsten Baugrabens
     aufmass  = []       # sammelt Aufmaß-Zeilen
@@ -1137,6 +1138,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
     printed_trench: set[int] = set()        # 1-basierte Indizes: Aufmaß "Baugraben N" schon geschrieben?
     printed_pass: set[int] = set()          # 1-basierte Naht-Indizes: Aufmaß "Durchstich N" schon geschrieben?
     printed_depth: set[int] = set()
+    printed_gok: set[int] = set()          # 1-basierte Indizes: Aufmaß "GOK N" schon geschrieben?
     skip_single_next = False                # rechter Graben des letzten Merges schon gezeichnet -> Solo überspringen
 
     # --- Tiefenmaße im Merge (Durchstich ODER Verbindung) ----------------------
@@ -1178,6 +1180,35 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
 
     def _same(a, b, eps=1e-6):
         return abs(float(a) - float(b)) < eps
+
+    def _add_gok_dim(x_col: float, y_top: float, gok_val: float, side: str = "left"):
+        """
+        Zeichnet eine vertikale GOK-Bemaßung zwischen der globalen Oberkante
+        (ohne GOK) und der tatsächlichen Oberkante dieses Grabens.
+        side: "left" oder "right" steuert die Lage der Maßlinie.
+        """
+        if abs(gok_val) < 1e-9:
+            return
+        y_ref = CLR_BOT + MAX_DEPTH                     # globale Oberkante ohne GOK
+        base_x = (x_col - (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT)) if side == "left" \
+                 else (x_col + (DIM_OFFSET_FRONT + GOK_DIM_XSHIFT))
+        sign = "+" if gok_val >= 0 else "-"            # Vorzeichen anzeigen
+        msp.add_linear_dim(
+            base=(base_x, y_ref),
+            p1=(x_col, y_ref),
+            p2=(x_col, y_top),
+            angle=90,
+            override={
+                "dimtxt":  DIM_TXT_H,
+                "dimclrd": 3,
+                "dimexe":  DIM_EXE_OFF,
+                "dimexo":  DIM_EXE_OFF,
+                "dimtad":  0,
+                # Text ersetzen: gemessener Wert (absolut) mit GOK-Label und Vorzeichen
+                "dimpost": f"GOK {sign}<> m",
+            },
+            dxfattribs={"layer": LAYER_TRENCH_OUT},
+        ).render()
 
     # NEU: gemeinsamer Bottom-Offset je Graben, damit die Oberkante auf gleicher Höhe liegt
     def _base_y(depth_ref: float) -> float:
@@ -1248,6 +1279,13 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 clearance_bottom=0.2,
                 depth_left=T1_L, depth_right=T1_R,
             )
+
+            gok1 = _gok(bg1)
+            if abs(gok1) > 1e-9 and (i+1) not in printed_gok:
+                yTop1 = (CLR_BOT + MAX_DEPTH) + gok1
+                x_col = x_start + CLR_LR                  # Innenkante links
+                _add_gok_dim(x_col, yTop1, gok1, side="left")
+                printed_gok.add(i+1)
 
             # Draufsicht (Top) – bleibt wie bisher auf gemeinsamer Y_TOP
             if (i+1) not in drawn_top:
@@ -1389,6 +1427,16 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 dim_right=(i + 2 == len(trenches))
             )
             drawn_top.add(i + 2)
+
+        gokL = _gok(bg1)
+        if abs(gokL) > 1e-9 and (i+1) not in printed_gok:
+            _add_gok_dim(x_inner_left, yTopL, gokL, side="left")
+            printed_gok.add(i+1)
+
+        gokR = _gok(bg2)
+        if abs(gokR) > 1e-9 and (i+2) not in printed_gok:
+            _add_gok_dim(x_inner_right, yTopR, gokR, side="right")
+            printed_gok.add(i+2)
 
         # --- Nahtlinie in der Draufsicht (nur im NICHT-überlappenden Bereich) ---
         # In der Überlappung (0 .. min(B1,B2)) gibt es KEINE Linie.
