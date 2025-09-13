@@ -1535,67 +1535,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         y_out_R_right = y_in_R_right - CLR_BOT
 
         # Gibt es an der Naht wirklich eine Außen-Stufe?
-        has_step = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
-
-        step_dir = 0.0
-        if has_step:
-            # bei tieferem rechten Teil nach links versetzen, sonst nach rechts
-            step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
-        x_step_out = xSeam + step_dir
-
-        # --- NEU: Stufe an der OBERKANTE bei Verbindungen, wenn GOK differiert ---
-        has_top_step = abs(yTopL - yTopR) > 1e-9
-        step_dir_top = (CLR_LR if (yTopL <= yTopR + 1e-9) else -CLR_LR) if has_top_step else 0.0
-        top_off = step_dir_top if join_only else 0.0
-        x_left_end_top    = xSeam       + step_dir_top
-        x_right_start_top = xRightStart + step_dir_top
-
-        # linkes Top-Stück bis zur Naht/Stufe
-        msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
-                        dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # rechtes Top-Stück ab Naht/Stufe
-        msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
-                        dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # vertikale Top-Stufe(n)
-        if has_top_step:
-            # linke Kante (Seam)
-            msp.add_lwpolyline([(x_left_end_top,  min(yTopL, yTopR)),
-                                (x_left_end_top,  max(yTopL, yTopR))],
-                                dxfattribs={"layer": LAYER_TRENCH_OUT})
-            # rechte Kante (Start des rechten BG – nur bei Durchstich sichtbar)
-            if not join_only:
-                msp.add_lwpolyline([(x_right_start_top, min(yTopL, yTopR)),
-                                    (x_right_start_top, max(yTopL, yTopR))],
-                                    dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        # Top-Brücke über die Lücke/Naht
-        msp.add_lwpolyline([(x_left_end_top,  max(yTopL, yTopR)),
-                            (x_right_start_top, max(yTopL, yTopR))],
-                        dxfattribs={"layer": LAYER_TRENCH_OUT})
-
-        if i > 0 and join_L:
-            # Top-Stufe an der linken Naht über GOK prüfen
-            bg0 = trenches[i-1]
-            T0_ref, T0_L, T0_R = _depths(bg0)
-            base0  = _base_y_with_gok(T0_ref, _gok(bg0))
-            yTop0  = base0 + T0_ref
-            yTop1  = yTopL  # (mittlerer Graben links)
-
-            top_off_L = 0.0
-            if abs(yTop0 - yTop1) > 1e-9:
-                top_off_L = (CLR_LR if (yTop0 <= yTop1 + 1e-9) else -CLR_LR)
-
-            x_left_mid_top  = x_start     + top_off_L
-            x_right_mid_top = xRightStart + top_off
-
-            if x_right_mid_top - x_left_mid_top > 1e-9:
-                msp.add_lwpolyline(
-                    [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
-                    dxfattribs={"layer": LAYER_TRENCH_OUT},
-                )
-
+        #has_step = join_only and (abs(y_out_L_right - y_out_R_left) > 1e-9)
         has_step = abs(y_out_L_right - y_out_R_left) > 1e-9
         step_dir_R = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR) if has_step else 0.0
 
@@ -1604,6 +1544,70 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
         # Stufen-Vertikale an linker / rechter Lückenkante (bei Verbindung identisch)
         x_step_out_L = xSeam       + step_dir_R
         x_step_out_R = xRightStart + step_dir_R
+
+        step_dir = 0.0
+        if has_step:
+            # bei tieferem rechten Teil nach links versetzen, sonst nach rechts
+            step_dir = (CLR_LR if (y_out_L_right <= y_out_R_left + 1e-9) else -CLR_LR)
+        x_step_out = xSeam + step_dir
+
+        # --- OBERKANTE (Front) exakt wie in der Draufsicht zeichnen ---
+        has_top_step = abs(yTopL - yTopR) > 1e-9
+
+        # Enden der Top-Linien liegen an den Naht-X (nicht an x_step_out_*)
+        x_left_end_top    = xSeam
+        x_right_start_top = xRightStart   # bei Verbindung = xSeam, bei Durchstich echte Lücke
+
+        # linkes Top-Stück
+        msp.add_lwpolyline([(xL, yTopL), (x_left_end_top, yTopL)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # rechtes Top-Stück
+        msp.add_lwpolyline([(x_right_start_top, yTopR), (xR, yTopR)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # vertikale Top-Stufe(n) genau auf der/den Naht(en)
+        if has_top_step:
+            msp.add_lwpolyline([(xSeam,        min(yTopL, yTopR)),
+                                (xSeam,        max(yTopL, yTopR))],
+                                dxfattribs={"layer": LAYER_TRENCH_OUT})
+            if not join_only:
+                msp.add_lwpolyline([(xRightStart, min(yTopL, yTopR)),
+                                    (xRightStart, max(yTopL, yTopR))],
+                                    dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # Brücke auf der höheren Oberkante zwischen den Nähten
+        if x_right_start_top - x_left_end_top > 1e-9:
+            msp.add_lwpolyline([(x_left_end_top,  max(yTopL, yTopR)),
+                                (x_right_start_top, max(yTopL, yTopR))],
+                            dxfattribs={"layer": LAYER_TRENCH_OUT})
+
+        # falls später genutzt (z. B. linke Nachbar-Naht):
+        top_off = 0.0  # x_left_end_top - xSeam == 0 ⇒ keine seitliche Verschiebung
+
+        # --- kleines Top-Zwischenstück an der linken Nachbar-Naht (nur bei Höhenstufe) ---
+        if i > 0 and join_L:
+            bg0 = trenches[i-1]
+            T0_ref, T0_L, T0_R = _depths(bg0)
+            base0 = _base_y_with_gok(T0_ref, _gok(bg0))
+            yTop0 = base0 + T0_ref
+            yTop1 = yTopL
+
+            if abs(yTop0 - yTop1) > 1e-9:
+                # Horizontaler Versatz an der linken Stufe (+/- CLR_LR)
+                top_off_L = (CLR_LR if (yTop0 <= yTop1 + 1e-9) else -CLR_LR)
+
+                # Start nie links der Außenkante
+                x_left_mid_top = max(x_start + top_off_L, xL)
+
+                # Ende STRENG an der Naht und niemals darüber (gegen "Nase")
+                x_right_mid_top = min(xSeam, xRightStart) - EPS
+
+                if x_right_mid_top - x_left_mid_top > 1e-9:
+                    msp.add_lwpolyline(
+                        [(x_left_mid_top, yTopL), (x_right_mid_top, yTopL)],
+                        dxfattribs={"layer": LAYER_TRENCH_OUT},
+                    )
 
         # Nur die horizontalen Randbänder außen – die schrägen Linien kommen
         # unten in "LINKE/RECHTE SCHRÄGE" mit sauberem Clipping.
