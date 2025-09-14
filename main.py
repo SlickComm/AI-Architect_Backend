@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from app.cad.trench import register_layers as reg_trench, draw_trench_front, draw_trench_top, draw_trench_front_lr, LAYER_TRENCH_OUT, LAYER_TRENCH_IN, LAYER_HATCH, HATCH_PATTERN, HATCH_SCALE, DIM_OFFSET_FRONT, DIM_TXT_H, DIM_EXE_OFF
-from app.cad.pipe import draw_pipe_front, register_layers as reg_pipe
+from app.cad.pipe import draw_pipe_front, draw_pipe_front_piecewise, register_layers as reg_pipe
 from app.cad.surface import draw_surface_top_segments, draw_surface_top, register_layers as reg_surface
 from app.cad.passages import register_layers as reg_pass, draw_pass_front
 
@@ -1266,6 +1266,9 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
             base1 = _base_y_with_gok(T1_ref, _gok(bg1))
             oy1   = base1 - 0.2
 
+            y_in_left  = base1 + (T1_ref - T1_L)
+            y_in_right = base1 + (T1_ref - T1_R)
+
             # Solo (kein Merge zur rechten Seite)
             draw_trench_front(
                 msp, (x_start, oy1), L1, T1_ref,
@@ -1297,6 +1300,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         diameter=d,
                         span_length=want,
                         offset=off,
+                        bottom_y_left=y_in_left,
+                        bottom_y_right=y_in_right,
                     )
                     if eff > 0:
                         aufmass.append(
@@ -1861,6 +1866,8 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                         continue
                 last_idx = idx
                 break
+
+            # ein "voll durchgehendes" Rohr aus dem Cluster herausfischen
             pipe_src = None
             for k in range(i, last_idx + 1):
                 cand = _first_pipe_for_trench(pipes, k + 1)
@@ -1869,20 +1876,49 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                     if full:
                         pipe_src = cand
                         break
+
             if pipe_src:
                 d   = float(pipe_src.get("diameter", 0) or 0)
                 off = float(pipe_src.get("offset", 0) or 0.0)
                 if d > 0:
-                    eff = draw_pipe_front(
+                    # --- Bodenprofil über den ganzen Cluster aufbauen ---
+                    profile_segments = []
+                    for k in range(i, last_idx + 1):
+                        bgk = trenches[k]
+                        Lk = float(bgk.get("length", 0) or 0.0)
+                        Tk_ref, Tk_L, Tk_R = _depths(bgk)
+                        base_k = _base_y_with_gok(Tk_ref, _gok(bgk))
+                        y0 = base_k + (Tk_ref - Tk_L)   # Boden links im BG k
+                        y1 = base_k + (Tk_ref - Tk_R)   # Boden rechts im BG k
+                        if Lk > 1e-9:
+                            profile_segments.append((Lk, y0, y1))
+
+                        # ggf. Durchstich zwischen k und k+1 als horizontales Segment
+                        if k < last_idx:
+                            seam = k + 1
+                            if seam not in join_set:
+                                p_between = _pass_for_between(passes, seam)
+                                if p_between is not None:
+                                    pw = float(p_between.get("length", 0) or 0.0)
+                                    if pw > 1e-9:
+                                        # Boden im Pass = Niveau am rechten Ende des vorherigen BG
+                                        profile_segments.append((pw, y1, y1))
+
+                    # --- Zeichnen: EIN durchgehendes Rohr mit Stückprofil ---
+                    # x-Referenz ist die linke Innenkante des Clusters
+                    eff = draw_pipe_front_piecewise(
                         msp,
-                        origin_front=(x_inner_left, CLR_BOT),
+                        origin_front=(x_inner_left, 0.0),   # y wird aus dem Profil ermittelt
                         trench_inner_length=L_span,
                         diameter=d,
+                        segments=profile_segments,
                         span_length=None,
                         offset=off,
                     )
                     if eff > 0:
-                        aufmass.append(f"Rohr {i+1}–{last_idx+1}: l={eff} m  Ø={d} m" + (f"  Versatz={off} m" if off else ""))
+                        aufmass.append(
+                            f"Rohr {i+1}–{last_idx+1}: l={eff} m  Ø={d} m" + (f"  Versatz={off} m" if off else "")
+                        )
                         for k in range(i, last_idx + 1):
                             drawn_pipe.add(k + 1)
 
@@ -1894,10 +1930,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offL = float(pipeL.get("offset", 0) or 0.0)
                 fullL, wantL = _pipe_full_and_want(pipeL)
                 effL = draw_pipe_front(
-                    msp, origin_front=(x_inner_left, CLR_BOT),
-                    trench_inner_length=L1, diameter=dL,
+                    msp,
+                    origin_front=(x_inner_left, CLR_BOT),
+                    trench_inner_length=L1,
+                    diameter=dL,
                     span_length=(None if fullL else float(pipeL.get("length"))),
                     offset=offL,
+                    bottom_y_left=y_in_L_left,
+                    bottom_y_right=y_in_L_right,
                 )
                 if effL > 0:
                     aufmass.append(f"Rohr {i+1}: l={effL} m  Ø={dL} m" + (f"  Versatz={offL} m" if offL else ""))
@@ -1910,10 +1950,14 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 offR = float(pipeR.get("offset", 0) or 0.0)
                 fullR, wantR = _pipe_full_and_want(pipeR)
                 effR = draw_pipe_front(
-                    msp, origin_front=(xRightStart, CLR_BOT),
-                    trench_inner_length=L2, diameter=dR,
+                    msp,
+                    origin_front=(xRightStart, CLR_BOT),
+                    trench_inner_length=L2,
+                    diameter=dR,
                     span_length=(None if fullR else float(pipeR.get("length"))),
                     offset=offR,
+                    bottom_y_left=y_in_R_left,
+                    bottom_y_right=y_in_R_right,
                 )
                 if effR > 0:
                     aufmass.append(f"Rohr {i+2}: l={effR} m  Ø={dR} m" + (f"  Versatz={offR} m" if offR else ""))
