@@ -12,7 +12,7 @@ from app.routes import (
     element_routes,
     dxf_routes,
     billing_routes,
-    stripe_routes,
+    payment_routes,
 )
 
 # -------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(element_routes.router, tags=["Elemente"])
     app.include_router(dxf_routes.router,     tags=["DXF"])
     app.include_router(billing_routes.router, tags=["Rechnung"])
-    app.include_router(stripe_routes.router, tags=["Stripe"])
+    app.include_router(payment_routes.router, tags=["Payment"])
 
     return app
 

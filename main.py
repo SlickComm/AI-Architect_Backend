@@ -25,7 +25,7 @@ from app.services.lv_matcher import best_matches_batch, parse_aufmass
 from app.invoices.builder import make_invoice
 from app.routes import billing_routes
 from app.routes import lv_routes
-from app.routes import stripe_routes
+from app.routes import payment_routes
 
 from app.utils.session_manager import session_manager
 
@@ -71,7 +71,7 @@ class InvoiceRequest(BaseModel):
 
 app.include_router(billing_routes.router, tags=["Billing"])
 app.include_router(lv_routes.router, tags=["LV"])
-app.include_router(stripe_routes.router, tags=["Payment"])
+app.include_router(payment_routes.router, tags=["Payment"])
 
 # -----------------------------------------------------
 # START HELPER ADD-MODE
