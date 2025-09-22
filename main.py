@@ -1199,7 +1199,7 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 "dimexe":  DIM_EXE_OFF,
                 "dimexo":  DIM_EXE_OFF,
                 "dimtad":  0,
-                "dimpost": f"GOK {sign}<> m",
+                "dimpost": f"GOK {sign}<>",
             },
             dxfattribs={"layer": LAYER_TRENCH_OUT},
         ).render()
@@ -1418,16 +1418,22 @@ def _generate_dxf_intern(parsed_json) -> tuple[str, str]:
                 clip_right=join_R,         # vorher: (join_R and join_only)
                 dim_right=(i + 2 == len(trenches))
             )
-            drawn_top.add(i + 2)
+            drawn_top.add(i + 2) 
 
         # --- GOK-Bemaßung NUR bei verbundenen Baugräben ---
         gokL = _gok(bg1)
-        if abs(gokL) > 1e-9 and (i+1) not in printed_gok:
+        gokR = _gok(bg2)
+
+        # 1) Linken nur bemaßen, wenn er sich vom rechten unterscheidet
+        if abs(gokL) > 1e-9 and not _same(gokL, gokR) and (i+1) not in printed_gok:
             _add_gok_dim(x_inner_left, yTopL, gokL, side="left")
             printed_gok.add(i+1)
 
-        gokR = _gok(bg2)
-        if abs(gokR) > 1e-9 and (i+2) not in printed_gok:
+        # 2) Rechten nur bemaßen, wenn die Kette RECHTS endet
+        gok_next = _gok(trenches[i+2]) if (i+2) < len(trenches) else None
+        same_with_next = bool(has_pass_right and (gok_next is not None) and _same(gokR, gok_next))
+
+        if abs(gokR) > 1e-9 and not same_with_next and (i+2) not in printed_gok:
             _add_gok_dim(x_inner_right, yTopR, gokR, side="right")
             printed_gok.add(i+2)
 
